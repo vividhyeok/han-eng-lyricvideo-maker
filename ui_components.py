@@ -1,9 +1,8 @@
-from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel, 
-                           QRadioButton, QFrame, QButtonGroup)
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
+                           QRadioButton)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage
 import requests
-from io import BytesIO
 
 def load_image_from_url(url, size=(120, 90)):
     """URL에서 이미지를 로드하여 QPixmap으로 반환"""
@@ -67,7 +66,7 @@ def create_youtube_result_item(parent, result, idx, main_window):
     layout.addWidget(info_widget)
     
     # 라디오 버튼 클릭 이벤트 연결
-    radio.clicked.connect(lambda: main_window.on_youtube_selection(idx))
+    radio.clicked.connect(lambda _, selected_idx=idx: main_window.on_youtube_selection(selected_idx))
     
     return item
 
@@ -128,7 +127,7 @@ def create_album_art_preview(parent, url, idx, window):
     layout.addWidget(art_label)
     
     # 선택 시 이벤트 연결
-    radio.clicked.connect(lambda: window.on_album_art_selected(idx))
+    radio.clicked.connect(lambda _, selected_idx=idx: window.on_album_art_selected(selected_idx))
     
     return item_widget
 
