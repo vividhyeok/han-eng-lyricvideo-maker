@@ -1,41 +1,38 @@
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QLineEdit, QPushButton, 
-                           QRadioButton, QFrame, QScrollArea, QMessageBox, QButtonGroup, QTextEdit)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QPainter
-import sys
-import requests
-from io import BytesIO
-
-from youtube_handler import youtube_search, download_youtube_audio
-from genie_handler import search_genie_songs, get_song_details, parse_genie_extra_info, get_genie_lyrics
-from openai_handler import parse_lrc_and_translate
-from video_maker import make_lyric_video
-from ui_components import create_youtube_result_item, ProgressWindow
-from album_art_finder import search_album_art_bugs, download_album_art
-from process_manager import ProcessManager, ProcessConfig # 이 줄을 추가
 
 import os
 import re
-import urllib.parse
-import webbrowser
-import threading
+import sys
 import traceback
 
+from genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
+from process_manager import ProcessConfig, ProcessManager
 from ui_components import (
-    load_image_from_url, create_youtube_result_item, 
-    create_album_art_preview, update_album_art_preview,
-    create_genie_result_item
+    ProgressWindow,
+    create_genie_result_item,
+    create_youtube_result_item,
+    load_image_from_url,
 )
-
-import asyncio
+from youtube_handler import youtube_search
 
 # 헬퍼 함수: 파일명에 사용할 수 없는 문자를 "_"로 치환
 def sanitize_filename(filename):
     return re.sub(r'[\\/*?:"<>|]', "_", filename)
-
-# 전역 변수: YouTube 검색 결과 리스트
-youtube_results = []
 
 class WorkerThread(QThread):
     progress = pyqtSignal(str, int)
@@ -49,13 +46,18 @@ class WorkerThread(QThread):
 
     def run(self):
         try:
+            selected_youtube = self.main_window.selected_youtube or {}
             config = ProcessConfig(
                 title=self.main_window.title_input.text().strip(),
                 artist=self.main_window.artist_input.text().strip(),
                 album_art_url=self.main_window.album_cover_input.text().strip(),
-                youtube_url=self.main_window.selected_youtube.get('link', '')  # 'url' -> 'link' 수정
+                youtube_url=selected_youtube.get('link', '').strip(),
             )
-            
+
+            validation_error = self.process_manager.validate_config(config)
+            if validation_error:
+                raise ValueError(validation_error)
+
             # ProcessManager를 통한 처리
             output_path = self.process_manager.process(config)
             
@@ -367,20 +369,36 @@ class MainWindow(QMainWindow):
 
     def process_selection(self):
         """선택 완료 후 처리"""
-        if not self.worker:
-            # 현재 창 숨기기
-            self.hide()
-            
-            # 진행 상황 창 생성 및 표시
-            self.progress_window = ProgressWindow()
-            self.progress_window.show()
-            
-            # 작업 스레드 시작
-            self.worker = WorkerThread(self)  # self를 전달하여 메인 윈도우 참조
-            self.worker.progress.connect(self.progress_window.update_progress)
-            self.worker.finished.connect(self.on_process_complete)
-            self.worker.error.connect(self.on_error)
-            self.worker.start()
+        if self.worker:
+            return
+
+        selected_youtube = self.selected_youtube or {}
+        config = ProcessConfig(
+            title=self.title_input.text().strip(),
+            artist=self.artist_input.text().strip(),
+            album_art_url=self.album_cover_input.text().strip(),
+            youtube_url=selected_youtube.get('link', '').strip(),
+        )
+
+        validator = ProcessManager(lambda *_: None)
+        validation_error = validator.validate_config(config)
+        if validation_error:
+            QMessageBox.warning(self, "경고", validation_error)
+            return
+
+        # 현재 창 숨기기
+        self.hide()
+
+        # 진행 상황 창 생성 및 표시
+        self.progress_window = ProgressWindow()
+        self.progress_window.show()
+
+        # 작업 스레드 시작
+        self.worker = WorkerThread(self)  # self를 전달하여 메인 윈도우 참조
+        self.worker.progress.connect(self.progress_window.update_progress)
+        self.worker.finished.connect(self.on_process_complete)
+        self.worker.error.connect(self.on_error)
+        self.worker.start()
 
     def on_process_complete(self):
         """작업 완료 처리"""
@@ -396,9 +414,6 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.show()  # 메인 창 다시 표시
 
-    def update_progress(self, message, value):
-        self.progress_label.setText(f"진행 상황: {message}")
-
     def apply_selected_genie(self):
         """지니뮤직 선택 결과 적용"""
         try:
@@ -413,26 +428,27 @@ class MainWindow(QMainWindow):
             # 기본 정보 업데이트
             self.title_input.setText(title)
             self.artist_input.setText(artist)
-            self.album_cover_input.setText(album_art_url)
-            
+            self.album_cover_input.setText(album_art_url or "")
+
             # 가사 자동으로 가져오기만 실행 (화면에 표시하지 않음)
             try:
-                _ = get_genie_lyrics(song_id)
-                print(f"[DEBUG] 가사 파일 생성 완료: {title}")
+                lyrics = get_genie_lyrics(song_id)
+                if not lyrics:
+                    raise ValueError("가사를 가져올 수 없습니다.")
+
+                os.makedirs("result", exist_ok=True)
+                filename = sanitize_filename(f"{artist} - {title}") or "lyrics"
+                lrc_path = os.path.join("result", f"{filename}.lrc")
+                with open(lrc_path, "w", encoding="utf-8") as lrc_file:
+                    lrc_file.write(lyrics.strip() + "\n")
+
+                print(f"[DEBUG] 가사 파일 생성 완료: {lrc_path}")
             except Exception as e:
                 print(f"[DEBUG] 가사 가져오기 실패: {e}")
-                
+                traceback.print_exc()
+
         except Exception as e:
             print(f"[DEBUG] 선택 결과 적용 실패: {e}")
-
-    def on_album_art_selected(self, idx):
-        """앨범 아트 선택 시 처리"""
-        try:
-            _, _, _, album_art_url = self.genie_results[idx]
-            self.album_cover_input.setText(album_art_url)
-            self.update_album_art(album_art_url)
-        except Exception as e:
-            print(f"앨범 아트 선택 처리 실패: {e}")
 
     def create_album_art_section(self):
         """앨범 아트 섹션 생성"""
@@ -491,11 +507,21 @@ class MainWindow(QMainWindow):
             preview.setPixmap(pixmap.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio))
         layout.addWidget(preview)
         
-        radio.clicked.connect(lambda: self.on_album_art_selected(url))
+        radio.clicked.connect(lambda _, selected_url=url: self.on_album_art_selected(selected_url))
         return item
 
-    def on_album_art_selected(self, url: str):
+    def on_album_art_selected(self, selection):
         """앨범 아트 선택 시 처리"""
+        if isinstance(selection, int):
+            try:
+                _, _, _, album_art_url = self.genie_results[selection]
+            except (IndexError, ValueError):
+                print(f"[DEBUG] 앨범 아트 인덱스 선택 실패: {selection}")
+                return
+            url = album_art_url or ""
+        else:
+            url = str(selection or "")
+
         self.album_cover_input.setText(url)
         self.update_album_art(url)
 
