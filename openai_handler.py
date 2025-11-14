@@ -1,42 +1,155 @@
 import json
 import traceback
-from typing import List, Dict
-import openai
+from typing import Dict, List, Optional
 import re
 import os
-from dotenv import load_dotenv
-from pydub import AudioSegment  # 오디오 길이 측정을 위해 필요 (pip install pydub)
+from itertools import zip_longest
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - 선택적 의존성
+    load_dotenv = lambda: None
+
+try:
+    from pydub import AudioSegment  # 오디오 길이 측정을 위해 필요 (pip install pydub)
+except ImportError:  # pragma: no cover - 선택적 의존성
+    AudioSegment = None
+
+try:
+    import openai
+except ImportError:  # pragma: no cover - 선택적 의존성
+    openai = None
 
 # 환경변수(.env) 로드 및 OpenAI API 키 설정
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if openai and OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+
+TRANSLATION_CACHE_PATH = os.path.join("temp", "translation_cache.json")
+_translation_cache: Optional[Dict[str, str]] = None
+
+def _ensure_cache_loaded() -> None:
+    global _translation_cache
+    if _translation_cache is not None:
+        return
+
+    try:
+        if os.path.exists(TRANSLATION_CACHE_PATH):
+            with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as cache_file:
+                _translation_cache = json.load(cache_file)
+        else:
+            _translation_cache = {}
+    except Exception:
+        _translation_cache = {}
+
+
+def _save_cache() -> None:
+    if _translation_cache is None:
+        return
+
+    os.makedirs(os.path.dirname(TRANSLATION_CACHE_PATH), exist_ok=True)
+    with open(TRANSLATION_CACHE_PATH, "w", encoding="utf-8") as cache_file:
+        json.dump(_translation_cache, cache_file, ensure_ascii=False, indent=2)
+
+
+def _get_cached_translation(lyric: str) -> Optional[str]:
+    _ensure_cache_loaded()
+    assert _translation_cache is not None
+    return _translation_cache.get(lyric)
+
+
+def _update_cache(original: str, translated: str) -> None:
+    _ensure_cache_loaded()
+    assert _translation_cache is not None
+    _translation_cache[original] = translated
+
 
 async def translate_lyrics(lyrics: List[str]) -> List[str]:
     """가사를 영어로 의역"""
+    if not lyrics:
+        return []
+
+    results: List[Optional[str]] = []
+    pending_indices: List[int] = []
+    pending_texts: List[str] = []
+
+    for idx, lyric in enumerate(lyrics):
+        stripped = lyric.strip()
+        if not stripped:
+            results.append("")
+            continue
+
+        if is_english(stripped):
+            results.append(stripped)
+            continue
+
+        cached = _get_cached_translation(stripped)
+        if cached:
+            results.append(cached)
+            continue
+
+        results.append(None)
+        pending_indices.append(idx)
+        pending_texts.append(stripped)
+
+    translations: List[str] = []
+    if pending_texts and openai and OPENAI_API_KEY:
+        try:
+            translations = await _translate_with_openai(pending_texts)
+        except Exception as exc:
+            print(f"[DEBUG] 번역 서비스 호출 실패: {exc}")
+            translations = []
+
+    for idx, pending_idx in enumerate(pending_indices):
+        translated = translations[idx] if idx < len(translations) else None
+        if translated is None or not translated.strip():
+            translated = lyrics[pending_idx]
+        cleaned = clean_translation(translated)
+        results[pending_idx] = cleaned
+        _update_cache(lyrics[pending_idx].strip(), cleaned)
+
+    if pending_indices:
+        _save_cache()
+
+    return [entry if entry is not None else original for entry, original in zip_longest(results, lyrics, fillvalue="")]
+
+
+async def _translate_with_openai(lyrics: List[str]) -> List[str]:
+    if not lyrics:
+        return []
+
+    if not openai or not OPENAI_API_KEY:
+        return lyrics
+
+    system_prompt = (
+        "You are a professional translator who converts Korean pop lyrics into natural English. "
+        "Return ONLY a JSON array of translated strings in the same order as the input."
+    )
+
+    user_prompt = json.dumps(lyrics, ensure_ascii=False)
+
+    response = await openai.ChatCompletion.acreate(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        temperature=0.2,
+        max_tokens=1500
+    )
+
+    content = response.choices[0].message.content.strip()
+
     try:
-        # 영어로만 이루어진 가사는 그대로 반환
-        if all(is_english(lyric) for lyric in lyrics):
-            return lyrics
+        translated_list = json.loads(content)
+    except json.JSONDecodeError:
+        translated_list = [line.strip() for line in content.splitlines() if line.strip()]
 
-        system_prompt = "You are a K-pop lyrics translator. Translate Korean lyrics naturally while keeping the emotional context."
-        user_prompt = f"Translate these lyrics maintaining the original feeling:\n{lyrics}"
-
-        response = await openai.ChatCompletion.acreate(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=1000
-        )
-        
-        translations = response.choices[0].message.content.strip().split('\n')
-        return [clean_translation(line.strip()) for line in translations if line.strip()]
-        
-    except Exception as e:
-        print(f"[DEBUG] 번역 오류: {str(e)}")
-        return lyrics  # 오류 시 원본 반환
+    cleaned: List[str] = []
+    for original, translated in zip_longest(lyrics, translated_list, fillvalue=""):
+        cleaned.append(clean_translation(translated) if translated else original)
+    return cleaned
 
 def is_english(text: str) -> bool:
     """텍스트가 영어로만 이루어져 있는지 확인"""
@@ -108,27 +221,34 @@ async def parse_lrc_and_translate(lrc_filepath: str, json_filepath: str) -> str:
             modified_lrc = lrc_content
         
         # 가사 데이터 추출 및 번역
-        lyrics_data = []
-        
+        lyrics_data: List[Dict[str, str]] = []
+        pending_texts: List[str] = []
+
         for line in modified_lrc.split('\n'):
             if line.startswith('[') and ']' in line:
                 try:
                     time_str = line[1:line.index(']')]
-                    text = line[line.index(']')+1:].strip()
-                    
-                    if text:
-                        seconds = convert_timestamp(time_str)
-                        translated = await translate_lyrics([text])
-                        translated_text = translated[0] if translated else "Translation failed"
-                        
-                        lyrics_data.append({
-                            'start_time': seconds,
-                            'original': text,
-                            'english': translated_text
-                        })
+                    text = line[line.index(']') + 1:].strip()
+
+                    if not text:
+                        continue
+
+                    seconds = convert_timestamp(time_str)
+                    lyrics_data.append({
+                        'start_time': seconds,
+                        'original': text
+                    })
+                    pending_texts.append(text)
                 except Exception as e:
                     print(f"라인 처리 중 오류: {e}")
                     continue
+
+        translations = await translate_lyrics(pending_texts) if pending_texts else []
+
+        for entry, translated_text in zip_longest(lyrics_data, translations, fillvalue=""):
+            if entry is None:
+                continue
+            entry['english'] = translated_text if translated_text else entry['original']
 
         # 시간순 정렬
         lyrics_data.sort(key=lambda x: x['start_time'])
@@ -160,7 +280,7 @@ async def generate_srt_from_lrc(lrc_filepath, srt_filepath, audio_filepath=None,
     """
     # 오디오 파일 길이 측정 (옵션)
     total_duration = None
-    if audio_filepath and os.path.exists(audio_filepath):
+    if audio_filepath and os.path.exists(audio_filepath) and AudioSegment:
         try:
             audio = AudioSegment.from_file(audio_filepath)
             total_duration = len(audio) / 1000.0  # 초 단위
