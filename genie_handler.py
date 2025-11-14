@@ -13,8 +13,21 @@ def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, 
         print(f"[DEBUG] GenieAPI 검색 결과: {len(songs)}개")
         
         results = []
-        for idx, (title, song_id, extra_info) in enumerate(songs):
+        for idx, song in enumerate(songs):
             try:
+                if isinstance(song, dict):
+                    title = song.get('title', '').strip()
+                    song_id = (song.get('id') or song.get('song_id') or '').strip()
+                    artist = song.get('artist', '').strip()
+                    album = song.get('album') or song.get('album_name') or ''
+                    album = album.strip()
+                    extra_info = f"{artist} - {album}" if album else artist
+                else:
+                    # 구버전 tuple 응답(title, song_id, extra_info)도 지원
+                    unpacked = list(song)
+                    title, song_id = unpacked[0], unpacked[1]
+                    extra_info = unpacked[2] if len(unpacked) > 2 else ''
+
                 print(f"\n[DEBUG] {idx+1}번째 곡 처리 중:")
                 print(f"  - 제목: {title}")
                 print(f"  - ID: {song_id}")
@@ -22,9 +35,12 @@ def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, 
                 
                 # 앨범 아트 URL 가져오기
                 album_art_url = get_album_art_url(song_id)
+                if not album_art_url and isinstance(song, dict):
+                    album_art_url = song.get('thumbnail')
+                album_art_url = album_art_url or ""
                 print(f"  - 앨범아트 URL: {album_art_url}")
                 
-                results.append((title, song_id, extra_info, album_art_url))
+                results.append((title.strip(), str(song_id), extra_info.strip(), album_art_url))
                 print(f"[DEBUG] {idx+1}번째 곡 처리 완료")
                 
             except Exception as e:
@@ -52,6 +68,8 @@ def get_genie_lyrics(song_id: str) -> Optional[str]:
 
 def parse_genie_extra_info(extra_info: str) -> Tuple[str, str]:
     """추가 정보에서 아티스트와 앨범 분리"""
+    if not extra_info:
+        return "", ""
     parts = extra_info.split(' - ', 1)
     artist = parts[0].strip()
     album = parts[1].strip() if len(parts) > 1 else ""
