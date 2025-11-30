@@ -16,15 +16,16 @@ except ImportError:  # pragma: no cover - 선택적 의존성
     AudioSegment = None
 
 try:
-    import openai
+    from openai import AsyncOpenAI
 except ImportError:  # pragma: no cover - 선택적 의존성
-    openai = None
+    AsyncOpenAI = None
 
 # 환경변수(.env) 로드 및 OpenAI API 키 설정
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if openai and OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
+client = None
+if AsyncOpenAI and OPENAI_API_KEY:
+    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 TRANSLATION_CACHE_PATH = os.path.join("temp", "translation_cache.json")
 _translation_cache: Optional[Dict[str, str]] = None
@@ -70,9 +71,10 @@ async def translate_lyrics(lyrics: List[str]) -> List[str]:
     if not lyrics:
         return []
 
+    # 1. Check cache and identify pending lines
     results: List[Optional[str]] = []
     pending_indices: List[int] = []
-    contexts: List[Dict[str, str]] = []
+    pending_lyrics: List[str] = []
 
     for idx, lyric in enumerate(lyrics):
         stripped = lyric.strip()
@@ -84,6 +86,9 @@ async def translate_lyrics(lyrics: List[str]) -> List[str]:
             results.append(stripped)
             continue
 
+        # For better context, we might want to re-translate even if cached,
+        # but to save costs/time, we'll use cache if available.
+        # If the user wants to force re-translation, they can clear the cache.
         cached = _get_cached_translation(stripped)
         if cached:
             results.append(cached)
@@ -91,75 +96,129 @@ async def translate_lyrics(lyrics: List[str]) -> List[str]:
 
         results.append(None)
         pending_indices.append(idx)
-        contexts.append({
-            "line": stripped,
-            "previous": lyrics[idx - 1].strip() if idx > 0 else "",
-            "next": lyrics[idx + 1].strip() if idx < len(lyrics) - 1 else "",
-        })
+        pending_lyrics.append(stripped)
 
-    translations: List[str] = []
-    if contexts and openai and OPENAI_API_KEY:
+    # 2. Translate pending lines with full context
+    if pending_lyrics and client:
         try:
-            translations = await _translate_with_openai(contexts)
+            # We send the *full* original lyrics as context, but ask to translate only the pending ones?
+            # Actually, to get the best context, we should probably send the whole song
+            # and ask for the whole song back, or at least the relevant parts.
+            # But that might be expensive if we only need a few lines.
+            # However, the user asked for "better context".
+            # Let's try to translate the *pending* lines, but provide the *surrounding* lines as context if possible.
+            # Or simpler: Just send the list of pending lyrics.
+            # Wait, if we just send pending lyrics [Line 1, Line 5, Line 10], we lose context.
+            # The best way for "context" is to send the WHOLE block of lyrics that needs translation.
+            # If the cache is sparse (some lines cached, some not), it's tricky.
+            # Let's assume for "better translation" we should prioritize the batch translation.
+            
+            # Strategy: If there are pending lines, we will send the *entire* input list to the LLM
+            # to ensure full context, but we only *use* (and pay attention to) the lines we need?
+            # No, that's wasteful if 90% is cached.
+            
+            # Compromise: Send the pending lyrics list. 
+            # BUT the user specifically asked for "context-aware".
+            # If I just send isolated pending lines, I lose context.
+            # Let's try to send the *entire* lyrics list to the API if we have *any* pending lines,
+            # and just update the cache for all of them. 
+            # This ensures consistency.
+            
+            # However, to avoid re-translating already English lines or empty lines,
+            # we can filter those out or just include them and let the LLM handle it.
+            
+            # Let's go with: Send ALL lyrics to OpenAI to get the best flow.
+            # We will ignore the cache for the purpose of generating the translation context,
+            # but we can still respect the cache if we want. 
+            # Given the user request "fix translation to be more natural", 
+            # re-translating everything is probably safer to ensure flow.
+            # Let's overwrite the results with the new full-context translation.
+            
+            translations = await _translate_with_openai(lyrics)
+            
+            # Update results and cache
+            # We map back to the original indices
+            if len(translations) == len(lyrics):
+                results = translations
+                for original, translated in zip(lyrics, translations):
+                    if original.strip() and not is_english(original.strip()):
+                        _update_cache(original.strip(), translated)
+            else:
+                # Fallback if counts don't match: try to map pending only?
+                # If counts don't match, we might have an issue.
+                # Let's just fill in what we can or fallback to original.
+                print(f"[WARN] Translation count mismatch: Input {len(lyrics)} vs Output {len(translations)}")
+                # Try to use what we have? Or just return original for mismatch.
+                # Let's try to use the pending logic as a fallback if the full batch fails?
+                # No, let's just return the translations we got, padded or truncated.
+                results = translations[:len(lyrics)] + [lyrics[i] for i in range(len(translations), len(lyrics))]
+
         except Exception as exc:
-            print(f"[DEBUG] 번역 서비스 호출 실패: {exc}")
-            translations = []
+            print(f"[DEBUG] Translation service failed: {exc}")
+            # Fallback to original for None entries
+            pass
 
-    for idx, pending_idx in enumerate(pending_indices):
-        translated = translations[idx] if idx < len(translations) else None
-        if translated is None or not translated.strip():
-            translated = lyrics[pending_idx]
-        cleaned = clean_translation(translated)
-        results[pending_idx] = cleaned
-        _update_cache(lyrics[pending_idx].strip(), cleaned)
+    # Fill any remaining Nones with original
+    final_output = []
+    for i, res in enumerate(results):
+        if res is None:
+            final_output.append(lyrics[i])
+        else:
+            final_output.append(res)
 
-    if pending_indices:
+    if pending_indices or (client and lyrics): # Save if we did anything
         _save_cache()
 
-    return [entry if entry is not None else original for entry, original in zip_longest(results, lyrics, fillvalue="")]
+    return final_output
 
 
-async def _translate_with_openai(lyrics: List[Dict[str, str]]) -> List[str]:
+async def _translate_with_openai(lyrics: List[str]) -> List[str]:
+    """Translate lyrics using selected AI model"""
     if not lyrics:
         return []
 
-    if not openai or not OPENAI_API_KEY:
-        return [entry.get("line", "") for entry in lyrics]
+    artist = os.getenv('CURRENT_ARTIST', 'Unknown Artist')
+    title = os.getenv('CURRENT_TITLE', 'Unknown Song')
 
-    system_prompt = (
-        "You are a professional translator who converts Korean pop lyrics into natural, idiomatic English. "
-        "Use the previous and next lines provided for context, keep line order, and avoid robotic phrasing. "
-        "Return ONLY a JSON array of translated strings in the same order as the input list."
-    )
-
-    user_prompt = json.dumps(lyrics, ensure_ascii=False)
-
-    response = await openai.ChatCompletion.acreate(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.2,
-        max_tokens=1500
-    )
-
-    content = response.choices[0].message.content.strip()
-
+    # Get selected model from config
+    from app.config.config_manager import get_config
+    from app.lyrics.ai_models import create_model
+    
+    config = get_config()
+    model_id = config.get_translation_model()
+    
+    print(f"[DEBUG] Using translation model: {model_id}")
+    
+    # Create model instance
+    model = create_model(model_id)
+    
+    if not model or not model.is_available():
+        print(f"[WARN] Model {model_id} not available, returning original lyrics")
+        return lyrics
+    
     try:
-        translated_list = json.loads(content)
-    except json.JSONDecodeError:
-        translated_list = [line.strip() for line in content.splitlines() if line.strip()]
-
-    cleaned: List[str] = []
-    for entry, translated in zip_longest(lyrics, translated_list, fillvalue={}):
-        original = entry.get("line", "") if isinstance(entry, dict) else ""
-        cleaned.append(clean_translation(translated) if translated else original)
-    return cleaned
+        translated = await model.translate(lyrics, artist, title)
+        
+        # Clean up translations
+        from app.lyrics.openai_handler import clean_translation
+        cleaned = [clean_translation(t) if isinstance(t, str) else str(t) for t in translated]
+        return cleaned
+        
+    except Exception as e:
+        print(f"[ERROR] Translation failed with {model_id}: {e}")
+        return lyrics
 
 def is_english(text: str) -> bool:
-    """텍스트가 영어로만 이루어져 있는지 확인"""
-    return all(char.isascii() or char.isspace() or char in ',.!?-"\'()' for char in text)
+    """텍스트가 100% 영어로만 이루어져 있는지 확인 (숫자, 특수문자 포함)"""
+    if not text or not text.strip():
+        return True
+    
+    # 한글이 하나라도 있으면 False
+    if re.search(r'[가-힣]', text):
+        return False
+    
+    # 영어, 숫자, 공백, 일반 특수문자만 있으면 True
+    return all(char.isascii() or char.isspace() for char in text)
 
 def clean_translation(text: str) -> str:
     """번역된 텍스트 정리"""

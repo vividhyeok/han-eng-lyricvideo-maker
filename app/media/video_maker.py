@@ -154,8 +154,10 @@ def _draw_multiline_centered(draw: ImageDraw.ImageDraw, lines: List[str], font: 
 
 def prepare_base_frame(background_img: Image.Image) -> Image.Image:
     frame = background_img.convert('RGBA')
-    blurred = frame.filter(ImageFilter.GaussianBlur(radius=12))
-    overlay = Image.new('RGBA', frame.size, (0, 0, 0, 140))
+    # Increased blur radius for minimalist look
+    blurred = frame.filter(ImageFilter.GaussianBlur(radius=30))
+    # Darker overlay for better contrast
+    overlay = Image.new('RGBA', frame.size, (0, 0, 0, 160))
     return Image.alpha_composite(blurred, overlay)
 
 
@@ -250,7 +252,9 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
                 next_start = max(next_start, start_time + 0.1)
                 clip_duration = max(0.1, next_start - start_time)
 
+                # Manual fade-in effect (0.5s) using set_opacity
                 clip = ImageClip(frame_array).set_duration(clip_duration).set_start(start_time)
+                clip = clip.set_opacity(lambda t: min(1, t/0.5))
                 clips.append(clip)
 
             # 배경 클립 생성
@@ -298,18 +302,6 @@ def convert_timestamp_to_seconds(timestamp: str) -> float:
     """SRT 타임스탬프를 초 단위로 변환"""
     hours, minutes, seconds = timestamp.replace(',', '.').split(':')
     return float(hours) * 3600 + float(minutes) * 60 + float(seconds)
-
-def convert_to_seconds(time_str):
-    """시간 형식 (HH:MM:SS,ms)을 초 단위로 변환하는 함수."""
-    try:
-        parts = re.split('[:,]', time_str)
-        if len(parts) != 4:
-            raise ValueError(f"잘못된 시간 형식: {time_str}")
-        h, m, s, ms = parts
-        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
-    except Exception as e:
-        print(f"convert_to_seconds 오류: {e}")
-        return 0  # 오류 발생 시 0초로 반환
 
 def convert_milliseconds_to_seconds(milliseconds: float) -> float:
     """밀리초를 초 단위로 변환"""

@@ -50,12 +50,33 @@ class ProcessManager:
             print(f"- 가사: {json_path}")
             print(f"- 출력: {output_path}")
             
-            # YouTube 다운로드
-            self.update_progress("YouTube 오디오 다운로드 중...", 20)
-            print(f"[DEBUG] YouTube 다운로드 시작: {config.youtube_url}")
-            if not download_youtube_audio(config.youtube_url, filename):
-                raise Exception("YouTube 오디오 다운로드 실패")
-            print(f"[DEBUG] YouTube 다운로드 완료")
+            # 오디오 다운로드 (spotDL 우선, 실패 시 YouTube 폴백)
+            self.update_progress("고품질 오디오 다운로드 중...", 20)
+            print(f"[DEBUG] spotDL 다운로드 시도: {config.artist} - {config.title}")
+            
+            from app.sources.spotdl_handler import download_audio_simple
+            
+            audio_downloaded = False
+            spotdl_result = download_audio_simple(config.artist, config.title, "temp")
+            
+            if spotdl_result and os.path.exists(spotdl_result):
+                print(f"[DEBUG] spotDL 다운로드 성공: {spotdl_result}")
+                # spotDL이 생성한 파일을 원하는 경로로 이동/복사
+                if spotdl_result != audio_path:
+                    import shutil
+                    shutil.move(spotdl_result, audio_path)
+                audio_downloaded = True
+            else:
+                print("[WARN] spotDL 다운로드 실패, YouTube 다운로드로 폴백")
+                self.update_progress("YouTube 오디오 다운로드 중...", 25)
+                print(f"[DEBUG] YouTube 다운로드 시작: {config.youtube_url}")
+                if download_youtube_audio(config.youtube_url, filename):
+                    audio_downloaded = True
+                    print(f"[DEBUG] YouTube 다운로드 완료")
+            
+            if not audio_downloaded:
+                raise Exception("오디오 다운로드 실패 (spotDL 및 YouTube 모두 실패)")
+            print(f"[DEBUG] 오디오 다운로드 완료: {audio_path}")
             
             # 앨범 아트 다운로드
             self.update_progress("앨범 아트 다운로드 중...", 40)
