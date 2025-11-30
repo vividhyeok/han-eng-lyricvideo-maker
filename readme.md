@@ -12,11 +12,12 @@
 - **앨범 아트 검색**  
   - MusicBrainz 및 Bugs 웹 스크래핑을 통해 앨범 아트 이미지를 검색하고 다운로드합니다.
 
-- **가사 번역**  
-  - LRC 파일을 파싱한 후, OpenAI API(GPT-3.5)를 이용해 가사를 자연스러운 영어로 번역합니다.
+- **가사 번역**
+  - LRC 파일을 파싱한 후, 주변 문맥을 함께 전달해 OpenAI API(GPT-3.5)로 자연스러운 영어 의역을 생성합니다.
 
-- **리릭 비디오 생성**  
+- **리릭 비디오/타임라인 생성**
   - 다운로드된 오디오, 앨범 아트, 번역된 가사를 MoviePy와 PIL을 이용해 합성하여 리릭 비디오를 생성합니다.
+  - 최종 비디오(MP4) 또는 Premiere Pro에서 바로 불러올 수 있는 Final Cut Pro XML(xmeml) 중 원하는 출력 형식을 선택할 수 있습니다.
 
 - **GUI 기반 작업 진행**  
   - PyQt6 기반의 인터페이스를 통해 사용자에게 검색 결과, 미리보기, 진행 상황 등을 실시간으로 제공합니다.
@@ -82,8 +83,11 @@ PyQt6 기반의 GUI 창이 나타납니다.
   - **Genie Music 결과**: 원하는 항목을 선택하면 제목, 아티스트, 앨범 아트 URL 등이 자동으로 입력 필드에 반영됩니다.
   - **YouTube 결과**: 원하는 영상을 선택하여 오디오 소스로 사용할 YouTube URL과 썸네일 정보가 설정됩니다.
 
-- **앨범 아트 미리보기**  
+- **앨범 아트 미리보기**
   - 직접 앨범 아트 URL을 입력하거나, 검색 결과에서 선택하면 미리보기 창에 이미지가 표시됩니다.
+
+- **출력 형식 선택**
+  - 입력 영역에서 최종 비디오(MP4) 생성 또는 Premiere Pro XML 생성 중 원하는 방식을 고를 수 있습니다.
 
 ### 3. 리릭 비디오 생성
 
@@ -93,29 +97,27 @@ PyQt6 기반의 GUI 창이 나타납니다.
   - 앨범 아트 이미지 다운로드
   - LRC 파일 파싱 및 OpenAI를 통한 가사 번역
   - MoviePy와 PIL을 이용한 리릭 비디오 생성
-- 진행 상황은 별도의 창에서 실시간으로 표시되며, 최종 비디오 파일은 `output` 디렉토리에 저장됩니다.
+- 진행 상황은 별도의 창에서 실시간으로 표시되며, 최종 비디오 파일과 Premiere Pro용 XML은 `output` 디렉토리에 함께 저장됩니다.
 
 ---
 
 ## 코드 구조
 
-- **main.py**  
-  - PyQt6 GUI 및 전체 프로세스를 관리하는 메인 스크립트
-- **album_art_finder.py**  
-  - MusicBrainz와 Bugs를 이용한 앨범 아트 검색 및 다운로드 기능
-- **genie_handler.py**  
-  - Genie API를 통한 노래 검색, 가사 및 앨범 아트 URL 추출 기능
-- **openai_handler.py**  
-  - LRC 파일 파싱 및 OpenAI API를 통한 가사 번역 기능
-- **process_manager.py**  
-  - 오디오/앨범 아트 다운로드, 가사 번역, 비디오 생성 작업을 순차적으로 실행하는 모듈
-- **ui_components.py**  
-  - PyQt6 기반의 사용자 인터페이스 구성 요소 제공
-- **video_maker.py**  
+- **main.py**
+  - GUI를 실행하는 진입점 스크립트. `app.ui.main_window.MainWindow`를 불러와 앱을 시작합니다.
+- **app/pipeline/process_manager.py**
+  - 오디오/앨범 아트 다운로드, 가사 번역, 비디오/프리미어 XML 생성 작업을 순차적으로 실행하는 파이프라인 관리 모듈
+- **app/lyrics/openai_handler.py**
+  - LRC 파일 파싱 및 문맥 기반 OpenAI 번역 기능을 담당하는 모듈
+- **app/media/video_maker.py**
   - MoviePy, PIL, NumPy를 활용하여 리릭 비디오를 생성하는 모듈
-- **youtube_handler.py**  
-  - YouTube 검색 및 오디오 다운로드(yt-dlp 사용) 기능
-- **genieapi**  
+- **app/export/premiere_exporter.py**
+  - Premiere Pro에서 불러올 수 있는 XML(xmeml) 타임라인 마커 파일 생성 모듈
+- **app/sources/**
+  - `album_art_finder.py`, `genie_handler.py`, `youtube_handler.py` 등 외부 데이터 소스 연동 모듈
+- **app/ui/**
+  - `main_window.py`, `components.py` 등 PyQt6 기반의 사용자 인터페이스 구성 요소
+- **genieapi**
   - Genie Music API와의 연동을 위한 외부 패키지
 
 ---
