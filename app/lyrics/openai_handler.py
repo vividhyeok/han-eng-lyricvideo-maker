@@ -1,9 +1,9 @@
 import json
-import traceback
-from typing import Dict, List, Optional
-import re
 import os
+import re
+import traceback
 from itertools import zip_longest
+from typing import Dict, List, Optional
 
 try:
     from dotenv import load_dotenv
@@ -66,13 +66,13 @@ def _update_cache(original: str, translated: str) -> None:
 
 
 async def translate_lyrics(lyrics: List[str]) -> List[str]:
-    """가사를 영어로 의역"""
+    """가사를 문맥 기반으로 자연스럽게 영어 의역"""
     if not lyrics:
         return []
 
     results: List[Optional[str]] = []
     pending_indices: List[int] = []
-    pending_texts: List[str] = []
+    contexts: List[Dict[str, str]] = []
 
     for idx, lyric in enumerate(lyrics):
         stripped = lyric.strip()
@@ -91,12 +91,16 @@ async def translate_lyrics(lyrics: List[str]) -> List[str]:
 
         results.append(None)
         pending_indices.append(idx)
-        pending_texts.append(stripped)
+        contexts.append({
+            "line": stripped,
+            "previous": lyrics[idx - 1].strip() if idx > 0 else "",
+            "next": lyrics[idx + 1].strip() if idx < len(lyrics) - 1 else "",
+        })
 
     translations: List[str] = []
-    if pending_texts and openai and OPENAI_API_KEY:
+    if contexts and openai and OPENAI_API_KEY:
         try:
-            translations = await _translate_with_openai(pending_texts)
+            translations = await _translate_with_openai(contexts)
         except Exception as exc:
             print(f"[DEBUG] 번역 서비스 호출 실패: {exc}")
             translations = []
@@ -115,16 +119,17 @@ async def translate_lyrics(lyrics: List[str]) -> List[str]:
     return [entry if entry is not None else original for entry, original in zip_longest(results, lyrics, fillvalue="")]
 
 
-async def _translate_with_openai(lyrics: List[str]) -> List[str]:
+async def _translate_with_openai(lyrics: List[Dict[str, str]]) -> List[str]:
     if not lyrics:
         return []
 
     if not openai or not OPENAI_API_KEY:
-        return lyrics
+        return [entry.get("line", "") for entry in lyrics]
 
     system_prompt = (
-        "You are a professional translator who converts Korean pop lyrics into natural English. "
-        "Return ONLY a JSON array of translated strings in the same order as the input."
+        "You are a professional translator who converts Korean pop lyrics into natural, idiomatic English. "
+        "Use the previous and next lines provided for context, keep line order, and avoid robotic phrasing. "
+        "Return ONLY a JSON array of translated strings in the same order as the input list."
     )
 
     user_prompt = json.dumps(lyrics, ensure_ascii=False)
@@ -147,7 +152,8 @@ async def _translate_with_openai(lyrics: List[str]) -> List[str]:
         translated_list = [line.strip() for line in content.splitlines() if line.strip()]
 
     cleaned: List[str] = []
-    for original, translated in zip_longest(lyrics, translated_list, fillvalue=""):
+    for entry, translated in zip_longest(lyrics, translated_list, fillvalue={}):
+        original = entry.get("line", "") if isinstance(entry, dict) else ""
         cleaned.append(clean_translation(translated) if translated else original)
     return cleaned
 
