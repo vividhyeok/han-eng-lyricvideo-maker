@@ -1,15 +1,17 @@
 import os
-import json
 import traceback
 import asyncio
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
-from youtube_handler import youtube_search, download_youtube_audio
-from genie_handler import get_genie_lyrics, search_genie_songs, get_song_details
-from openai_handler import parse_lrc_and_translate
-from video_maker import make_lyric_video
-from album_art_finder import download_album_art
+from app.export.premiere_exporter import export_premiere_xml
+from app.lyrics.openai_handler import parse_lrc_and_translate
+from app.media.video_maker import make_lyric_video
+from app.sources.album_art_finder import download_album_art
+from app.sources.youtube_handler import download_youtube_audio
+
+OutputMode = Literal["video", "premiere_xml"]
+
 
 @dataclass
 class ProcessConfig:
@@ -17,6 +19,7 @@ class ProcessConfig:
     artist: str
     album_art_url: str
     youtube_url: str
+    output_mode: OutputMode = "video"
     target_dir: str = "temp"
     output_dir: str = "output"
 
@@ -39,6 +42,7 @@ class ProcessManager:
             image_path = f"temp/{filename}.jpg"
             json_path = f"temp/{filename}_lyrics.json"
             output_path = f"output/{filename}.mp4"
+            premiere_xml_path = f"output/{filename}.xml"
             
             print("[DEBUG] 파일 경로 설정 완료:")
             print(f"- 오디오: {audio_path}")
@@ -80,16 +84,26 @@ class ProcessManager:
                 os.environ.pop('CURRENT_ARTIST', None)
                 os.environ.pop('CURRENT_TITLE', None)
             
-            # 비디오 생성
             try:
-                self.update_progress("리릭 비디오 생성 중...", 90)
-                print("[DEBUG] 비디오 생성 시작")
-                
-                # 필요한 파일들 확인
                 for file_path in [audio_path, image_path, lyrics_json_path]:
                     if not os.path.exists(file_path):
                         raise Exception(f"필요한 파일이 없습니다: {file_path}")
-                
+
+                if config.output_mode == "premiere_xml":
+                    self.update_progress("Premiere XML 내보내는 중...", 90)
+                    print("[DEBUG] Premiere XML 전용 모드 시작")
+                    xml_result = export_premiere_xml(
+                        audio_path=audio_path,
+                        album_art_path=image_path,
+                        lyrics_json_path=lyrics_json_path,
+                        output_xml_path=premiere_xml_path,
+                    )
+                    print(f"[DEBUG] Premiere XML 생성 완료: {xml_result}")
+                    return xml_result
+
+                self.update_progress("리릭 비디오 생성 중...", 90)
+                print("[DEBUG] 비디오 생성 시작")
+
                 make_lyric_video(
                     audio_path=audio_path,
                     album_art_path=image_path,
@@ -97,11 +111,23 @@ class ProcessManager:
                     output_path=output_path
                 )
                 print(f"[DEBUG] 비디오 생성 완료: {output_path}")
-                
+
+                try:
+                    self.update_progress("Premiere XML 내보내는 중...", 95)
+                    xml_result = export_premiere_xml(
+                        audio_path=audio_path,
+                        album_art_path=image_path,
+                        lyrics_json_path=lyrics_json_path,
+                        output_xml_path=premiere_xml_path,
+                    )
+                    print(f"[DEBUG] Premiere XML 생성 완료: {xml_result}")
+                except Exception as xml_error:
+                    print(f"[WARN] Premiere XML 생성 실패: {xml_error}")
+
                 return output_path
-                
+
             except Exception as e:
-                print(f"[ERROR] 비디오 생성 중 오류 발생: {str(e)}")
+                print(f"[ERROR] 비디오/XML 생성 중 오류 발생: {str(e)}")
                 traceback.print_exc()
                 raise
                 
@@ -124,4 +150,6 @@ class ProcessManager:
     def validate_config(self, config: ProcessConfig) -> Optional[str]:
         if not all([config.title, config.artist, config.album_art_url, config.youtube_url]):
             return "제목, 아티스트, 앨범 아트 URL, YouTube URL을 모두 입력해주세요."
+        if config.output_mode not in ("video", "premiere_xml"):
+            return "출력 형식이 올바르지 않습니다."
         return None
