@@ -22,12 +22,15 @@ class ProcessConfig:
     output_mode: OutputMode = "video"
     target_dir: str = "temp"
     output_dir: str = "output"
+    lrc_path: Optional[str] = None
 
 class ProcessManager:
     def __init__(self, update_progress: Callable[[str, int], None]):
         self.update_progress = update_progress
 
     async def process_async(self, config: ProcessConfig):
+        temp_files_to_cleanup = []
+
         try:
             print("[DEBUG] 작업 프로세스 시작")
             
@@ -74,7 +77,9 @@ class ProcessManager:
                     audio_downloaded = True
                     print(f"[DEBUG] YouTube 다운로드 완료")
             
-            if not audio_downloaded:
+            if audio_downloaded:
+                temp_files_to_cleanup.append(audio_path)
+            else:
                 raise Exception("오디오 다운로드 실패 (spotDL 및 YouTube 모두 실패)")
             print(f"[DEBUG] 오디오 다운로드 완료: {audio_path}")
             
@@ -84,14 +89,29 @@ class ProcessManager:
             if not download_album_art(config.album_art_url, image_path):
                 raise Exception("앨범 아트 다운로드 실패")
             print("[DEBUG] 앨범 아트 다운로드 완료")
+            temp_files_to_cleanup.append(image_path)
             
             # LRC 파일 찾기
             self.update_progress("가사 파일 처리 중...", 60)
-            lrc_files = [f for f in os.listdir("result") if f.endswith(".lrc")]
-            if not lrc_files:
-                raise Exception("가사 파일을 찾을 수 없습니다")
-            lrc_path = os.path.join("result", lrc_files[0])
-            print(f"[DEBUG] LRC 파일 발견: {lrc_path}")
+            lrc_path = None
+            if config.lrc_path:
+                if os.path.exists(config.lrc_path):
+                    lrc_path = config.lrc_path
+                    print(f"[DEBUG] 지정된 LRC 파일 사용: {lrc_path}")
+                else:
+                    print(f"[WARN] 지정된 LRC 파일을 찾을 수 없습니다: {config.lrc_path}")
+
+            if lrc_path is None:
+                lrc_files = [
+                    os.path.join("result", f)
+                    for f in os.listdir("result")
+                    if f.endswith(".lrc")
+                ]
+                if not lrc_files:
+                    raise Exception("가사 파일을 찾을 수 없습니다")
+                lrc_files.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+                lrc_path = lrc_files[0]
+                print(f"[DEBUG] 최신 LRC 파일 사용: {lrc_path}")
             
             # 가사 번역
             try:
@@ -100,6 +120,7 @@ class ProcessManager:
                 os.environ['CURRENT_ARTIST'] = config.artist
                 os.environ['CURRENT_TITLE'] = config.title
                 lyrics_json_path = await parse_lrc_and_translate(lrc_path, json_path)
+                temp_files_to_cleanup.append(lyrics_json_path)
                 print(f"[DEBUG] 가사 번역 완료: {lyrics_json_path}")
             finally:
                 os.environ.pop('CURRENT_ARTIST', None)
@@ -120,6 +141,7 @@ class ProcessManager:
                         output_xml_path=premiere_xml_path,
                     )
                     print(f"[DEBUG] Premiere XML 생성 완료: {xml_result}")
+                    self._cleanup_temp_files(temp_files_to_cleanup)
                     return xml_result
 
                 self.update_progress("리릭 비디오 생성 중...", 90)
@@ -145,6 +167,7 @@ class ProcessManager:
                 except Exception as xml_error:
                     print(f"[WARN] Premiere XML 생성 실패: {xml_error}")
 
+                self._cleanup_temp_files(temp_files_to_cleanup)
                 return output_path
 
             except Exception as e:
@@ -167,6 +190,18 @@ class ProcessManager:
     def _sanitize_filename(filename: str) -> str:
         import re
         return re.sub(r'[\\/*?:"<>|]', "_", filename)
+
+    @staticmethod
+    def _cleanup_temp_files(paths):
+        for path in paths:
+            if not path:
+                continue
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    print(f"[DEBUG] 임시 파일 삭제: {path}")
+                except OSError as cleanup_error:
+                    print(f"[WARN] 임시 파일 삭제 실패 ({path}): {cleanup_error}")
 
     def validate_config(self, config: ProcessConfig) -> Optional[str]:
         if not all([config.title, config.artist, config.album_art_url, config.youtube_url]):

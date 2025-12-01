@@ -4,12 +4,12 @@ import requests
 import traceback
 from bs4 import BeautifulSoup
 
-def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, str]]:
+def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, str, int]]:
     """지니뮤직에서 노래 검색"""
     try:
         print(f"[DEBUG] 지니뮤직 검색 시작: 검색어 '{query}'")
         genie = GenieAPI()
-        songs = genie.search_song(query, limit=limit)  # limit 파라미터 추가
+        songs = genie.search_song(query, limit=limit)
         print(f"[DEBUG] GenieAPI 검색 결과: {len(songs)}개")
         
         results = []
@@ -23,7 +23,6 @@ def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, 
                     album = album.strip()
                     extra_info = f"{artist} - {album}" if album else artist
                 else:
-                    # 구버전 tuple 응답(title, song_id, extra_info)도 지원
                     unpacked = list(song)
                     title, song_id = unpacked[0], unpacked[1]
                     extra_info = unpacked[2] if len(unpacked) > 2 else ''
@@ -33,14 +32,13 @@ def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, 
                 print(f"  - ID: {song_id}")
                 print(f"  - 추가정보: {extra_info}")
                 
-                # 앨범 아트 URL 가져오기
-                album_art_url = get_album_art_url(song_id)
+                album_art_url, duration = get_song_details(song_id)
                 if not album_art_url and isinstance(song, dict):
                     album_art_url = song.get('thumbnail')
                 album_art_url = album_art_url or ""
                 print(f"  - 앨범아트 URL: {album_art_url}")
                 
-                results.append((title.strip(), str(song_id), extra_info.strip(), album_art_url))
+                results.append((title.strip(), str(song_id), extra_info.strip(), album_art_url, duration))
                 print(f"[DEBUG] {idx+1}번째 곡 처리 완료")
                 
             except Exception as e:
@@ -75,14 +73,13 @@ def parse_genie_extra_info(extra_info: str) -> Tuple[str, str]:
     album = parts[1].strip() if len(parts) > 1 else ""
     return artist, album
 
-def get_album_art_url(song_id: str) -> Optional[str]:
-    """지니뮤직에서 앨범 아트 URL 가져오기"""
+def get_song_details(song_id: str) -> Tuple[Optional[str], Optional[int]]:
+    """지니뮤직에서 앨범 아트 URL과 재생 시간 가져오기"""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         
-        # 곡 정보 페이지에서 앨범 정보 가져오기
         song_url = f"https://www.genie.co.kr/detail/songInfo?xgnm={song_id}"
         print(f"[DEBUG] 곡 정보 URL: {song_url}")
         response = requests.get(song_url, headers=headers)
@@ -90,27 +87,44 @@ def get_album_art_url(song_id: str) -> Optional[str]:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # HTML 구조에 맞는 선택자로 변경
+        # 앨범 아트
+        album_art_url = None
         album_img = soup.select_one('div.photo-zone span.cover > img')
         if album_img and 'src' in album_img.attrs:
             img_url = album_img['src']
             if img_url.startswith('//'):
                 img_url = 'https:' + img_url
+            album_art_url = img_url.replace('/dims/resize/Q_80,0', '')
+            print(f"[DEBUG] 앨범 아트 URL 찾음: {album_art_url}")
+        else:
+            print("[DEBUG] 앨범 아트를 찾을 수 없습니다.")
+
+        # 재생 시간
+        duration = None
+        info_elements = soup.select('ul.info-data li')
+        for item in info_elements:
+            title_span = item.select_one('span.title')
+            if title_span and '재생시간' in title_span.text:
+                value_span = item.select_one('span.value')
+                if value_span:
+                    time_str = value_span.text.strip()
+                    try:
+                        minutes, seconds = map(int, time_str.split(':'))
+                        duration = minutes * 60 + seconds
+                        print(f"[DEBUG] 재생 시간 찾음: {time_str} ({duration}초)")
+                    except ValueError:
+                        print(f"[DEBUG] 재생 시간 형식 오류: {time_str}")
+                break
+        else:
+            print("[DEBUG] 재생 시간을 찾을 수 없습니다.")
             
-            # 고화질 이미지 URL로 변환
-            img_url = img_url.replace('/dims/resize/Q_80,0', '')
-            print(f"[DEBUG] 앨범 아트 URL 찾음: {img_url}")
-            return img_url
-            
-        print("[DEBUG] 앨범 아트를 찾을 수 없습니다.")
-        print("[DEBUG] HTML 구조:")
-        print(soup.select_one('div.photo-zone'))
+        return album_art_url, duration
             
     except Exception as e:
-        print(f"[DEBUG] 앨범 아트 URL 가져오기 실패: {e}")
+        print(f"[DEBUG] 앨범 아트 및 재생 시간 가져오기 실패: {e}")
         traceback.print_exc()
         
-    return None
+    return None, None
 
 def get_album_arts_url(song_id: str) -> List[str]:
     """지니뮤직에서 여러 앨범 아트 URL 가져오기"""
@@ -152,7 +166,7 @@ def get_album_arts_url(song_id: str) -> List[str]:
         
     return urls
 
-def get_song_details(song_id: str) -> Optional[Tuple[str, str]]:
+def get_song_album_id_and_art_url(song_id: str) -> Optional[Tuple[str, str]]:
     """지니뮤직에서 앨범 아트 URL과 앨범 ID 가져오기"""
     try:
         headers = {

@@ -40,7 +40,8 @@ class WorkerThread(QThread):
                 artist=self.main_window.artist_input.text(),
                 album_art_url=self.main_window.album_cover_input.text(),
                 youtube_url=self.main_window.selected_youtube_url,
-                output_mode=self.main_window.output_mode
+                output_mode=self.main_window.output_mode,
+                lrc_path=self.main_window.selected_lrc_path
             )
 
             validation_error = self.process_manager.validate_config(config)
@@ -82,9 +83,11 @@ class ModernMainWindow(QMainWindow):
         self.output_mode = "video"
         self.youtube_upload_enabled = False
         self.selected_youtube_url = ""
+        self.selected_lrc_path = None
         self.genie_results = []
         self.youtube_results = []
         self.worker = None
+        self.selected_genie_duration = None
         
         # Create UI
         self.init_ui()
@@ -124,9 +127,9 @@ class ModernMainWindow(QMainWindow):
         """Create modern top bar with search"""
         top_bar = QFrame()
         top_bar.setObjectName("card")
-        top_bar.setFixedHeight(80)
+        top_bar.setFixedHeight(120)  # Increased from 100 to 120
         layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(30, 15, 30, 15)
+        layout.setContentsMargins(30, 25, 30, 25)  # Increased margins from 20 to 25
         
         # App Title
         title_label = QLabel("🎵 Lyric Video Maker")
@@ -139,12 +142,14 @@ class ModernMainWindow(QMainWindow):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Search for a song...")
         self.search_input.setFixedWidth(400)
+        self.search_input.setMinimumHeight(40)  # Increased from 35 to 40
         self.search_input.returnPressed.connect(self.search_song)
         layout.addWidget(self.search_input)
         
         # Search Button
         search_btn = QPushButton("Search")
         search_btn.setFixedWidth(120)
+        search_btn.setMinimumHeight(40)  # Increased from 35 to 40
         search_btn.clicked.connect(self.search_song)
         layout.addWidget(search_btn)
         
@@ -304,7 +309,7 @@ class ModernMainWindow(QMainWindow):
         return panel
     
     def search_song(self):
-        """Search for songs"""
+        """Search for songs on Genie"""
         query = self.search_input.text().strip()
         if not query:
             QMessageBox.warning(self, "Warning", "Please enter a search query")
@@ -319,13 +324,6 @@ class ModernMainWindow(QMainWindow):
             self.display_genie_results()
         except Exception as e:
             print(f"[ERROR] Genie search failed: {e}")
-        
-        # Search YouTube
-        try:
-            self.youtube_results = youtube_search(query)
-            self.display_youtube_results()
-        except Exception as e:
-            print(f"[ERROR] YouTube search failed: {e}")
     
     def clear_results(self):
         """Clear search results"""
@@ -351,9 +349,25 @@ class ModernMainWindow(QMainWindow):
         for idx, result in enumerate(self.genie_results):
             card = self.create_result_card(result, idx, "genie")
             self.results_layout.addWidget(card)
-    
+
     def display_youtube_results(self):
         """Display YouTube search results as cards"""
+        # Clear previous youtube results
+        # This is a bit of a hack to find and remove only youtube results
+        for i in reversed(range(self.results_layout.count())):
+            item = self.results_layout.itemAt(i)
+            if item and item.widget():
+                # Heuristic to identify youtube section title
+                if isinstance(item.widget(), QLabel) and "YouTube Results" in item.widget().text():
+                    item.widget().deleteLater()
+                    # We assume youtube results are after this title
+                    # A better implementation would be to hold a reference to the widgets
+                    for j in reversed(range(i, self.results_layout.count())):
+                        item_to_remove = self.results_layout.itemAt(j)
+                        if item_to_remove and item_to_remove.widget():
+                            item_to_remove.widget().deleteLater()
+                    break
+
         if not self.youtube_results:
             return
         
@@ -369,7 +383,11 @@ class ModernMainWindow(QMainWindow):
         for idx, result in enumerate(self.youtube_results):
             card = self.create_result_card(result, idx, "youtube")
             self.results_layout.addWidget(card)
-    
+        
+        # If there is only one result (best match), auto-select it
+        if len(self.youtube_results) == 1:
+            self.youtube_button_group.button(0).click()
+
     def create_result_card(self, result, idx, source):
         """Create a modern result card"""
         card = QFrame()
@@ -387,66 +405,102 @@ class ModernMainWindow(QMainWindow):
             self.youtube_button_group.addButton(radio, idx)
             radio.clicked.connect(lambda: self.on_youtube_selected(idx))
         layout.addWidget(radio)
-        
+
         # Thumbnail
         thumb_label = QLabel()
         thumb_label.setFixedSize(80, 80)
         thumb_label.setStyleSheet("border-radius: 8px;")
-        
+
         if source == "genie":
-            thumb_url = result.get('albumArt', '')
+            thumb_url = result[3]  # album_art_url
         else:
             thumb_url = result.get('thumbnail', '')
-        
+
         if thumb_url:
             pixmap = load_image_from_url(thumb_url)
             if pixmap:
                 thumb_label.setPixmap(pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
-        
+
         layout.addWidget(thumb_label)
-        
+
         # Info
         info_layout = QVBoxLayout()
         info_layout.setSpacing(5)
-        
-        title = result.get('title', 'Unknown')
-        artist = result.get('artist', 'Unknown')
-        
+
+        if source == "genie":
+            title = result[0]
+            artist, album = parse_genie_extra_info(result[2])
+            duration_sec = result[4]
+            duration_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}" if duration_sec is not None else "N/A"
+        else:
+            title = result.get('title', 'Unknown')
+            artist = "YouTube" # Simplified for YouTube results
+            album = None
+            duration_str = result.get('duration', "N/A")
+
         title_label = QLabel(title)
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         title_label.setWordWrap(True)
         info_layout.addWidget(title_label)
-        
+
         artist_label = QLabel(f"🎤 {artist}")
         artist_label.setObjectName("hint")
         info_layout.addWidget(artist_label)
         
-        if source == "genie" and result.get('album'):
-            album_label = QLabel(f"💿 {result['album']}")
+        duration_label = QLabel(f"⏳ {duration_str}")
+        duration_label.setObjectName("hint")
+        info_layout.addWidget(duration_label)
+
+        if source == "genie" and album:
+            album_label = QLabel(f"💿 {album}")
             album_label.setObjectName("hint")
             info_layout.addWidget(album_label)
-        
+
         info_layout.addStretch()
         layout.addLayout(info_layout, stretch=1)
-        
+
         return card
     
     def on_genie_selected(self, idx):
-        """Handle Genie result selection"""
+        """Handle Genie result selection and trigger YouTube search"""
         if idx < 0 or idx >= len(self.genie_results):
             return
         
         result = self.genie_results[idx]
-        self.title_input.setText(result.get('title', ''))
-        self.artist_input.setText(result.get('artist', ''))
-        self.album_cover_input.setText(result.get('albumArt', ''))
+        # result: (title, song_id, extra_info, album_art_url, duration)
+        title, song_id, extra_info, album_art_url, duration = result
         
+        artist, album = parse_genie_extra_info(extra_info)
+        self.title_input.setText(title)
+        self.artist_input.setText(artist)
+        self.album_cover_input.setText(album_art_url)
+        self.selected_genie_duration = duration
+
+        # Automatically search YouTube with details
+        try:
+            query = f"{artist} {title}"
+            print(f"[DEBUG] 자동 YouTube 검색: '{query}', 길이: {duration}초")
+            self.youtube_results = youtube_search(query, target_duration=duration)
+            self.display_youtube_results()
+        except Exception as e:
+            print(f"[ERROR] YouTube search failed: {e}")
+            self.youtube_results = []
+            self.display_youtube_results() # Clear previous results on failure
+
         # Download lyrics
         try:
-            song_id = result.get('songId')
+            self.selected_lrc_path = None
             if song_id:
-                get_genie_lyrics(song_id, "result")
-                QMessageBox.information(self, "Success", "Lyrics downloaded successfully!")
+                lyrics = get_genie_lyrics(song_id)
+                if lyrics:
+                    os.makedirs("result", exist_ok=True)
+                    lrc_path = os.path.join("result", f"{song_id}.lrc")
+                    with open(lrc_path, "w", encoding="utf-8") as lrc_file:
+                        lrc_file.write(lyrics.strip() + "\n")
+                    self.selected_lrc_path = lrc_path
+                    print(f"[DEBUG] LRC 파일 저장: {lrc_path}")
+                else:
+                    print("[WARN] 가사 데이터를 가져오지 못했습니다.")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to download lyrics: {e}")
     
@@ -457,6 +511,8 @@ class ModernMainWindow(QMainWindow):
         
         result = self.youtube_results[idx]
         self.selected_youtube_url = result.get('link', '')
+        print(f"[DEBUG] 선택된 YouTube URL: {self.selected_youtube_url}")
+
     
     def update_album_art(self, url):
         """Update album art preview"""

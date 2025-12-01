@@ -1,113 +1,78 @@
-"""
-spotDL handler for high-quality audio downloads
-Uses Spotify metadata to find the best matching audio from YouTube
-"""
+"""spotDL handler for downloading audio via the CLI interface."""
+
+from __future__ import annotations
 
 import os
+import shlex
+import subprocess
+from shutil import which
 from typing import Optional
-from spotdl import Spotdl
-from spotdl.types.song import Song
+
+
+def _ensure_spotdl_exists() -> None:
+    """Raise helpful error when spotdl CLI is missing."""
+    if which("spotdl") is None:
+        raise FileNotFoundError(
+            "spotdl CLI not found. Install with 'pip install spotdl' and ensure it is on PATH."
+        )
+
+
+def _run_spotdl_download(query: str, output_template: str) -> subprocess.CompletedProcess[str]:
+    """Execute spotdl CLI download command."""
+    cmd = [
+        "spotdl",
+        "download",
+        query,
+        "--output",
+        output_template,
+        "--format",
+        "mp3",
+        "--bitrate",
+        "320k",
+    ]
+    print(f"[DEBUG] spotDL CLI 실행: {' '.join(shlex.quote(part) for part in cmd)}")
+    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+
 
 def download_audio_with_spotdl(artist: str, title: str, output_dir: str = "temp") -> Optional[str]:
-    """
-    spotDL을 사용하여 고품질 오디오 다운로드
-    
+    """Download audio using spotDL CLI.
+
     Args:
-        artist: 아티스트 이름
-        title: 곡 제목
-        output_dir: 출력 디렉토리
-    
+        artist: Artist name
+        title: Track title
+        output_dir: Directory for the downloaded audio file
+
     Returns:
-        다운로드된 파일 경로 또는 None
+        Path to downloaded MP3 or None when the download failed
     """
     try:
+        _ensure_spotdl_exists()
         os.makedirs(output_dir, exist_ok=True)
-        
-        # spotDL 초기화
-        spotdl = Spotdl(
-            client_id="your_client_id",  # Spotify API credentials (optional for search)
-            client_secret="your_client_secret",
-            output_format="mp3",
-            bitrate="320k",  # 최고 품질
-            threads=4
-        )
-        
-        # 검색 쿼리 생성
+
         query = f"{artist} - {title}"
-        print(f"[DEBUG] spotDL 검색: {query}")
-        
-        # Spotify에서 곡 검색
-        songs = spotdl.search([query])
-        
-        if not songs:
-            print(f"[DEBUG] spotDL 검색 결과 없음: {query}")
+        output_template = os.path.join(output_dir, "{artist} - {title}.{output-ext}")
+
+        result = _run_spotdl_download(query, output_template)
+        if result.returncode != 0:
+            print(f"[ERROR] spotDL CLI 실패: {result.stderr.strip()}")
             return None
-        
-        song = songs[0]
-        print(f"[DEBUG] 찾은 곡: {song.name} by {song.artist}")
-        
-        # 다운로드
-        output_file = os.path.join(output_dir, f"{artist} - {title}.mp3")
-        spotdl.download(song, output_file=output_file)
-        
-        if os.path.exists(output_file):
-            print(f"[DEBUG] spotDL 다운로드 완료: {output_file}")
-            return output_file
-        
+
+        expected_file = os.path.join(output_dir, f"{artist} - {title}.mp3")
+        if os.path.exists(expected_file):
+            print(f"[DEBUG] spotDL 다운로드 완료: {expected_file}")
+            return expected_file
+
+        print(f"[ERROR] spotDL 다운로드 결과 파일을 찾을 수 없습니다: {expected_file}")
         return None
-        
-    except Exception as e:
-        print(f"[ERROR] spotDL 다운로드 실패: {str(e)}")
+
+    except Exception as exc:
+        print(f"[ERROR] spotDL 다운로드 실패: {exc}")
         import traceback
         traceback.print_exc()
         return None
 
 
 def download_audio_simple(artist: str, title: str, output_dir: str = "temp") -> Optional[str]:
-    """
-    간단한 spotDL 다운로드 (Spotify API credentials 불필요)
-    
-    Args:
-        artist: 아티스트 이름
-        title: 곡 제목
-        output_dir: 출력 디렉토리
-    
-    Returns:
-        다운로드된 파일 경로 또는 None
-    """
-    try:
-        import subprocess
-        os.makedirs(output_dir, exist_ok=True)
-        
-        query = f"{artist} - {title}"
-        output_template = os.path.join(output_dir, "{artist} - {title}.{output-ext}")
-        
-        print(f"[DEBUG] spotDL CLI 다운로드: {query}")
-        
-        # spotDL CLI 사용
-        cmd = [
-            "spotdl",
-            "download",
-            query,
-            "--output", output_template,
-            "--format", "mp3",
-            "--bitrate", "320k"
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            expected_file = os.path.join(output_dir, f"{artist} - {title}.mp3")
-            if os.path.exists(expected_file):
-                print(f"[DEBUG] spotDL 다운로드 완료: {expected_file}")
-                return expected_file
-        else:
-            print(f"[ERROR] spotDL CLI 오류: {result.stderr}")
-        
-        return None
-        
-    except Exception as e:
-        print(f"[ERROR] spotDL 다운로드 실패: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
+    """Backward-compatible alias that wraps ``download_audio_with_spotdl``."""
+
+    return download_audio_with_spotdl(artist, title, output_dir)

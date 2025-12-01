@@ -1,8 +1,11 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
-                           QRadioButton)
+                           QRadioButton, QDialog, QLineEdit, QTextEdit, 
+                           QPushButton, QComboBox, QCheckBox, QMessageBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap, QImage
 import requests
+import threading
+from app.upload.youtube_uploader import upload_video
 
 def load_image_from_url(url, size=(120, 90)):
     """URL에서 이미지를 로드하여 QPixmap으로 반환"""
@@ -165,3 +168,101 @@ class ProgressWindow(QWidget):
         self.progress_label.setText(f"진행 상황: {message}")
         # if value is not None:
         #     self.progress_bar.setValue(value)
+
+
+class YouTubeUploadDialog(QDialog):
+    """YouTube 업로드 대화상자"""
+    def __init__(self, video_path, title, artist):
+        super().__init__()
+        self.video_path = video_path
+        self.setWindowTitle("YouTube 업로드")
+        self.setFixedSize(500, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        # 제목 입력
+        title_layout = QHBoxLayout()
+        title_layout.addWidget(QLabel("제목:"))
+        self.title_input = QLineEdit(f"{title} - {artist}")
+        title_layout.addWidget(self.title_input)
+        layout.addLayout(title_layout)
+        
+        # 설명 입력
+        layout.addWidget(QLabel("설명:"))
+        self.description_input = QTextEdit()
+        self.description_input.setPlainText(f"{artist}의 {title} 뮤직비디오")
+        self.description_input.setMaximumHeight(100)
+        layout.addWidget(self.description_input)
+        
+        # 태그 입력
+        layout.addWidget(QLabel("태그 (쉼표로 구분):"))
+        self.tags_input = QLineEdit(f"{artist},{title},뮤직비디오")
+        layout.addWidget(self.tags_input)
+        
+        # 공개 설정
+        privacy_layout = QHBoxLayout()
+        privacy_layout.addWidget(QLabel("공개 설정:"))
+        self.privacy_combo = QComboBox()
+        self.privacy_combo.addItems(["private", "unlisted", "public"])
+        self.privacy_combo.setCurrentText("private")
+        privacy_layout.addWidget(self.privacy_combo)
+        layout.addLayout(privacy_layout)
+        
+        # 버튼들
+        button_layout = QHBoxLayout()
+        self.upload_button = QPushButton("업로드")
+        self.upload_button.clicked.connect(self.upload_video)
+        button_layout.addWidget(self.upload_button)
+        
+        self.cancel_button = QPushButton("취소")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+        
+        # 진행 상황 레이블
+        self.status_label = QLabel("")
+        layout.addWidget(self.status_label)
+        
+        self.center_window()
+    
+    def center_window(self):
+        """창을 화면 중앙에 위치시킴"""
+        frame = self.frameGeometry()
+        center = self.screen().availableGeometry().center()
+        frame.moveCenter(center)
+        self.move(frame.topLeft())
+    
+    def upload_video(self):
+        """비디오 업로드"""
+        self.upload_button.setEnabled(False)
+        self.status_label.setText("업로드 준비 중...")
+        
+        # UI에서 값 가져오기
+        title = self.title_input.text()
+        description = self.description_input.toPlainText()
+        tags = [tag.strip() for tag in self.tags_input.text().split(',') if tag.strip()]
+        privacy = self.privacy_combo.currentText()
+        
+        # 백그라운드에서 업로드
+        def upload_thread():
+            try:
+                self.status_label.setText("YouTube에 업로드 중...")
+                video_id = upload_video(
+                    video_path=self.video_path,
+                    title=title,
+                    description=description,
+                    tags=tags,
+                    privacy_status=privacy
+                )
+                self.status_label.setText(f"업로드 완료! https://www.youtube.com/watch?v={video_id}")
+                QMessageBox.information(self, "성공", f"YouTube 업로드가 완료되었습니다!\nhttps://www.youtube.com/watch?v={video_id}")
+                self.accept()
+            except Exception as e:
+                self.status_label.setText(f"업로드 실패: {str(e)}")
+                QMessageBox.critical(self, "오류", f"업로드 실패: {str(e)}")
+                self.upload_button.setEnabled(True)
+        
+        thread = threading.Thread(target=upload_thread)
+        thread.daemon = True
+        thread.start()

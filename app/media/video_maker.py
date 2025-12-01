@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.VideoClip import ImageClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.fx import all as vfx
 import numpy as np
 import re
 import json
@@ -254,7 +255,7 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
 
                 # Manual fade-in effect (0.5s) using set_opacity
                 clip = ImageClip(frame_array).set_duration(clip_duration).set_start(start_time)
-                clip = clip.set_opacity(lambda t: min(1, t/0.5))
+                clip = clip.fx(vfx.fadein, 0.5)
                 clips.append(clip)
 
             # 배경 클립 생성
