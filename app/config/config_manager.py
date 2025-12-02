@@ -7,7 +7,7 @@ import json
 import os
 from typing import Any, Dict, Optional
 
-CONFIG_PATH = os.path.join("temp", "config.json")
+from app.config.paths import CONFIG_FILE_PATH, ensure_data_dirs
 
 DEFAULT_CONFIG = {
     "translation_model": "gpt-4o-mini",
@@ -27,8 +27,8 @@ class ConfigManager:
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from file"""
         try:
-            if os.path.exists(CONFIG_PATH):
-                with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            if os.path.exists(CONFIG_FILE_PATH):
+                with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
                     # Merge with defaults to ensure all keys exist
                     return {**DEFAULT_CONFIG, **loaded}
@@ -40,8 +40,9 @@ class ConfigManager:
     def save_config(self) -> None:
         """Save configuration to file"""
         try:
-            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+            ensure_data_dirs()
+            os.makedirs(os.path.dirname(CONFIG_FILE_PATH), exist_ok=True)
+            with open(CONFIG_FILE_PATH, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[ERROR] Failed to save config: {e}")

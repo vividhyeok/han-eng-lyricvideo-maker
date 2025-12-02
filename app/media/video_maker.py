@@ -10,6 +10,8 @@ import re
 import json
 import traceback
 
+from app.config.paths import TEMP_DIR, ensure_data_dirs
+
 def draw_outlined_text(draw: ImageDraw.ImageDraw, pos: Tuple[float, float], text: str, font: ImageFont.ImageFont,
                        text_color=(255, 255, 255), outline_color=(0, 0, 0), outline_width=3) -> None:
     """테두리가 있는 텍스트 그리기"""
@@ -211,7 +213,8 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
         print("[DEBUG] 리릭 비디오 생성 시작")
 
         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-        os.makedirs('temp', exist_ok=True)
+        ensure_data_dirs()
+        os.makedirs(TEMP_DIR, exist_ok=True)
 
         audio = None
         background_clip = None
@@ -264,7 +267,7 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
             # 모든 클립 합성
             final_clip = CompositeVideoClip([background_clip] + clips, size=(1920, 1080)).set_audio(audio)
 
-            temp_audiofile = os.path.join('temp', 'lyric-video-temp-audio.m4a')
+            temp_audiofile = os.path.join(TEMP_DIR, 'lyric-video-temp-audio.m4a')
             threads = max(1, (os.cpu_count() or 4) // 2)
 
             # 비디오 파일 생성

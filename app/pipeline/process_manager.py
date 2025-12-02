@@ -4,6 +4,13 @@ import asyncio
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
+from app.config.paths import (
+    LYRICS_DIR,
+    OUTPUT_DIR,
+    TEMP_DIR,
+    ensure_data_dirs,
+    LEGACY_LYRICS_DIR,
+)
 from app.export.premiere_exporter import export_premiere_xml
 from app.lyrics.openai_handler import parse_lrc_and_translate
 from app.media.video_maker import make_lyric_video
@@ -20,8 +27,8 @@ class ProcessConfig:
     album_art_url: str
     youtube_url: str
     output_mode: OutputMode = "video"
-    target_dir: str = "temp"
-    output_dir: str = "output"
+    target_dir: str = TEMP_DIR
+    output_dir: str = OUTPUT_DIR
     lrc_path: Optional[str] = None
 
 class ProcessManager:
@@ -34,18 +41,19 @@ class ProcessManager:
         try:
             print("[DEBUG] 작업 프로세스 시작")
             
-            # 디렉토리 생성
-            for dir_path in ["temp", "output", "result"]:
-                os.makedirs(dir_path, exist_ok=True)
-                print(f"[DEBUG] 디렉토리 확인: {dir_path}")
+            ensure_data_dirs()
+            os.makedirs(LYRICS_DIR, exist_ok=True)
+            print(f"[DEBUG] 디렉토리 확인: {TEMP_DIR}")
+            print(f"[DEBUG] 디렉토리 확인: {OUTPUT_DIR}")
+            print(f"[DEBUG] 디렉토리 확인: {LYRICS_DIR}")
                 
             # 파일명 생성
             filename = self._sanitize_filename(f"{config.artist} - {config.title}")
-            audio_path = f"temp/{filename}.mp3"
-            image_path = f"temp/{filename}.jpg"
-            json_path = f"temp/{filename}_lyrics.json"
-            output_path = f"output/{filename}.mp4"
-            premiere_xml_path = f"output/{filename}.xml"
+            audio_path = os.path.join(TEMP_DIR, f"{filename}.mp3")
+            image_path = os.path.join(TEMP_DIR, f"{filename}.jpg")
+            json_path = os.path.join(TEMP_DIR, f"{filename}_lyrics.json")
+            output_path = os.path.join(OUTPUT_DIR, f"{filename}.mp4")
+            premiere_xml_path = os.path.join(OUTPUT_DIR, f"{filename}.xml")
             
             print("[DEBUG] 파일 경로 설정 완료:")
             print(f"- 오디오: {audio_path}")
@@ -60,7 +68,7 @@ class ProcessManager:
             from app.sources.spotdl_handler import download_audio_simple
             
             audio_downloaded = False
-            spotdl_result = download_audio_simple(config.artist, config.title, "temp")
+            spotdl_result = download_audio_simple(config.artist, config.title, TEMP_DIR)
             
             if spotdl_result and os.path.exists(spotdl_result):
                 print(f"[DEBUG] spotDL 다운로드 성공: {spotdl_result}")
@@ -102,11 +110,22 @@ class ProcessManager:
                     print(f"[WARN] 지정된 LRC 파일을 찾을 수 없습니다: {config.lrc_path}")
 
             if lrc_path is None:
-                lrc_files = [
-                    os.path.join("result", f)
-                    for f in os.listdir("result")
-                    if f.endswith(".lrc")
-                ]
+                search_dirs = [LYRICS_DIR]
+                if os.path.isdir(LEGACY_LYRICS_DIR) and LEGACY_LYRICS_DIR not in search_dirs:
+                    search_dirs.append(LEGACY_LYRICS_DIR)
+
+                lrc_files = []
+                for lyrics_dir in search_dirs:
+                    try:
+                        lrc_files.extend(
+                            [
+                                os.path.join(lyrics_dir, f)
+                                for f in os.listdir(lyrics_dir)
+                                if f.endswith(".lrc")
+                            ]
+                        )
+                    except FileNotFoundError:
+                        continue
                 if not lrc_files:
                     raise Exception("가사 파일을 찾을 수 없습니다")
                 lrc_files.sort(key=lambda path: os.path.getmtime(path), reverse=True)

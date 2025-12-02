@@ -10,6 +10,8 @@ YouTube 자동 업로드 테스트 스크립트
 import os
 import asyncio
 from dotenv import load_dotenv
+
+from app.config.paths import OUTPUT_DIR, TEMP_DIR, ensure_data_dirs
 from app.lyrics.openai_handler import parse_lrc_and_translate
 from app.media.video_maker import make_lyric_video
 from app.upload.youtube_uploader import upload_video
@@ -18,6 +20,8 @@ from app.upload.youtube_uploader import upload_video
 load_dotenv()
 
 async def main():
+    ensure_data_dirs()
+
     # 파일 경로 설정
     lrc_file = input("LRC 파일 경로를 입력하세요: ").strip()
     audio_file = input("오디오 파일 경로를 입력하세요: ").strip()
@@ -42,13 +46,13 @@ async def main():
     
     # 1. LRC 파싱 및 번역
     print("\n📝 1단계: 가사 번역 중...")
-    lyrics_json_path = "temp/lyrics.json"
+    lyrics_json_path = os.path.join(TEMP_DIR, "lyrics.json")
     await parse_lrc_and_translate(lrc_file, lyrics_json_path)
     print("✅ 가사 번역 완료")
     
     # 2. 동영상 생성
     print("\n🎬 2단계: 리릭 비디오 생성 중...")
-    output_video_path = f"result/{artist} - {title} (Lyric Video).mp4"
+    output_video_path = os.path.join(OUTPUT_DIR, f"{artist} - {title} (Lyric Video).mp4")
     make_lyric_video(
         audio_path=audio_file,
         album_art_path=album_art_file,

@@ -20,6 +20,7 @@ import re
 import sys
 import traceback
 
+from app.config.paths import LYRICS_DIR, TEMP_DIR, ensure_data_dirs
 from app.pipeline.process_manager import ProcessConfig, ProcessManager
 from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
 from app.sources.youtube_handler import youtube_search
@@ -86,13 +87,14 @@ class WorkerThread(QThread):
             
             # 디렉토리 확인
             print("[DEBUG] 디렉토리 확인 중...")
-            if not os.path.exists("result"):
-                print("[DEBUG] result 디렉토리가 없습니다. 생성합니다.")
-                os.makedirs("result")
+            ensure_data_dirs()
+            if not os.path.exists(LYRICS_DIR):
+                print("[DEBUG] lyrics 디렉토리가 없습니다. 생성합니다.")
+                os.makedirs(LYRICS_DIR)
             
             # LRC 파일 검색
             print("[DEBUG] LRC 파일 검색 중...")
-            lrc_files = [f for f in os.listdir("result") if f.endswith(".lrc")]
+            lrc_files = [f for f in os.listdir(LYRICS_DIR) if f.endswith(".lrc")]
             print(f"[DEBUG] 발견된 LRC 파일: {lrc_files}")
             
             if not lrc_files:
@@ -100,12 +102,12 @@ class WorkerThread(QThread):
                 raise Exception("가사 파일을 찾을 수 없습니다.")
                 
             # LRC 파일 경로 설정
-            lrc_path = os.path.join("result", lrc_files[0])
+            lrc_path = os.path.join(LYRICS_DIR, lrc_files[0])
             print(f"[DEBUG] 선택된 LRC 파일 경로: {lrc_path}")
             
             # JSON 파일 경로 설정
             filename = sanitize_filename(f"{config.artist} - {config.title}")
-            json_path = f"temp/{filename}_lyrics.json"
+            json_path = os.path.join(TEMP_DIR, f"{filename}_lyrics.json")
             print(f"[DEBUG] JSON 파일 저장 경로: {json_path}")
             
             # 환경 변수 설정
@@ -488,9 +490,9 @@ class MainWindow(QMainWindow):
                 if not lyrics:
                     raise ValueError("가사를 가져올 수 없습니다.")
 
-                os.makedirs("result", exist_ok=True)
+                os.makedirs(LYRICS_DIR, exist_ok=True)
                 filename = sanitize_filename(f"{artist} - {title}") or "lyrics"
-                lrc_path = os.path.join("result", f"{filename}.lrc")
+                lrc_path = os.path.join(LYRICS_DIR, f"{filename}.lrc")
                 with open(lrc_path, "w", encoding="utf-8") as lrc_file:
                     lrc_file.write(lyrics.strip() + "\n")
 

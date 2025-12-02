@@ -1,134 +1,213 @@
-# Lyric Video Maker
+# 🎬 Lyric Video Maker
 
-**Lyric Video Maker**는 여러 API와 라이브러리를 활용하여 노래 검색, 가사 번역, 앨범 아트 및 오디오 다운로드, 그리고 최종적으로 리릭 비디오를 생성하는 파이썬 애플리케이션입니다.  
-이 프로젝트는 PyQt6 기반의 GUI를 제공하며, 다음과 같은 기능들을 통합합니다.
-
-## 주요 기능
-
-- **노래 검색**  
-  - **Genie API**를 통해 노래 정보(제목, 아티스트, 앨범, 가사 등)를 검색합니다.
-  - YouTube 검색을 통해 오디오 소스를 선택할 수 있습니다.
-
-- **앨범 아트 검색**  
-  - MusicBrainz 및 Bugs 웹 스크래핑을 통해 앨범 아트 이미지를 검색하고 다운로드합니다.
-
-- **가사 번역**
-  - LRC 파일을 파싱한 후, 주변 문맥을 함께 전달해 OpenAI API(GPT-3.5)로 자연스러운 영어 의역을 생성합니다.
-
-- **리릭 비디오/타임라인 생성**
-  - 다운로드된 오디오, 앨범 아트, 번역된 가사를 MoviePy와 PIL을 이용해 합성하여 리릭 비디오를 생성합니다.
-  - 최종 비디오(MP4) 또는 Premiere Pro에서 바로 불러올 수 있는 Final Cut Pro XML(xmeml) 중 원하는 출력 형식을 선택할 수 있습니다.
-
-- **GUI 기반 작업 진행**  
-  - PyQt6 기반의 인터페이스를 통해 사용자에게 검색 결과, 미리보기, 진행 상황 등을 실시간으로 제공합니다.
+**노래 검색 → 가사 번역 → 앨범 아트 다운로드 → 리릭 비디오 생성까지 한 번에!**
+PyQt6 기반의 GUI로 누구나 빠르게 고퀄리티 리릭 비디오를 제작할 수 있는 파이썬 애플리케이션입니다.
 
 ---
 
-## 설치 및 환경 설정
+# ✨ 주요 기능
 
-### 1. 저장소 클론
+### 🔍 1. 노래 검색
+
+* **Genie API**로 노래 정보(제목/아티스트/앨범/가사)를 자동 수집
+* **YouTube 검색**을 통한 오디오 소스 선택
+* 선택 즉시 메타데이터 입력란 자동 채움
+
+### 🖼️ 2. 앨범 아트 자동 수집
+
+* MusicBrainz + Bugs 음악 페이지 스크래핑
+* URL 수동 입력도 가능하며 미리보기 즉시 표시
+
+### 🌍 3. 자연스러운 가사 번역(LRC 기반)
+
+* LRC 파일 파싱
+* 문맥 보정 후 OpenAI API로 영어 번역 생성
+* 캐시를 활용하여 반복 번역 최소화
+
+### 🎞️ 4. 리릭 비디오 생성 / 편집용 XML 출력
+
+* MoviePy + PIL로 **앨범 아트 + 타임라인 + 번역 가사** 합성
+* **MP4 비디오** 또는 **Final Cut Pro XML(Premiere 호환)** 출력
+* YouTube 자동 업로드 옵션 지원(OAuth)
+
+### 🖥️ 5. 직관적인 PyQt6 GUI
+
+* 실시간 진행률 표시
+* 검색 결과 미리보기
+* 출력 옵션 및 설정 메뉴 제공
+
+---
+
+# 🚀 설치 및 초기 설정
+
+## 1. 저장소 클론
 
 ```bash
 git clone https://github.com/yourusername/LyricVideoMaker.git
 cd LyricVideoMaker
 ```
 
-### 2. 가상 환경 생성 (권장)
+## 2. 가상환경 생성(권장)
 
 ```bash
 python -m venv venv
-# Linux/MacOS
+# macOS/Linux
 source venv/bin/activate
 # Windows
 venv\Scripts\activate
 ```
 
-### 3. 필수 패키지 설치
-
-프로젝트 루트에 있는 `requirements.txt` 파일을 사용하여 필요한 패키지를 설치합니다.
+## 3. 패키지 설치
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. 환경 변수 설정
+## 4. 환경 변수 설정
 
-프로젝트 루트에 `.env` 파일을 생성하고 OpenAI API 키를 추가합니다.
+프로젝트 루트에 `.env` 생성 후 아래 내용 입력:
 
 ```env
-OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_API_KEY=your_api_key_here
 ```
+
+(YouTube 업로드 사용 시 OAuth 파일은 `client_secret.json`으로 루트에 배치)
 
 ---
 
-## 사용법
+# 🖱️ 사용 방법
 
-### 1. 애플리케이션 실행
-
-메인 스크립트인 `main.py`를 실행하여 애플리케이션을 시작합니다.
+## 1. 앱 실행
 
 ```bash
 python main.py
 ```
 
-PyQt6 기반의 GUI 창이 나타납니다.
-
-### 2. 노래 검색 및 선택
-
-- **검색 실행**  
-  - 상단의 검색창에 노래 제목 또는 아티스트 이름을 입력한 후 **검색** 버튼을 클릭합니다.
-  - Genie API와 YouTube에서 검색 결과가 각각 표시됩니다.
-
-- **결과 선택**  
-  - **Genie Music 결과**: 원하는 항목을 선택하면 제목, 아티스트, 앨범 아트 URL 등이 자동으로 입력 필드에 반영됩니다.
-  - **YouTube 결과**: 원하는 영상을 선택하여 오디오 소스로 사용할 YouTube URL과 썸네일 정보가 설정됩니다.
-
-- **앨범 아트 미리보기**
-  - 직접 앨범 아트 URL을 입력하거나, 검색 결과에서 선택하면 미리보기 창에 이미지가 표시됩니다.
-
-- **출력 형식 선택**
-  - 입력 영역에서 최종 비디오(MP4) 생성 또는 Premiere Pro XML 생성 중 원하는 방식을 고를 수 있습니다.
-
-### 3. 리릭 비디오 생성
-
-- 모든 정보(노래 제목, 아티스트, 앨범 아트 URL, YouTube URL 등)를 확인한 후 **선택 완료 후 처리** 버튼을 클릭합니다.
-- 순차적으로 아래 작업이 진행됩니다:
-  - YouTube 오디오를 다운로드하여 MP3 파일 생성
-  - 앨범 아트 이미지 다운로드
-  - LRC 파일 파싱 및 OpenAI를 통한 가사 번역
-  - MoviePy와 PIL을 이용한 리릭 비디오 생성
-- 진행 상황은 별도의 창에서 실시간으로 표시되며, 최종 비디오 파일과 Premiere Pro용 XML은 `output` 디렉토리에 함께 저장됩니다.
+PyQt6 GUI가 실행되며, 필요한 폴더(`data/…`)가 자동 생성됩니다.
 
 ---
 
-## 코드 구조
+## 2. 노래 검색 → 선택
 
-- **main.py**
-  - GUI를 실행하는 진입점 스크립트. `app.ui.main_window.MainWindow`를 불러와 앱을 시작합니다.
-- **app/pipeline/process_manager.py**
-  - 오디오/앨범 아트 다운로드, 가사 번역, 비디오/프리미어 XML 생성 작업을 순차적으로 실행하는 파이프라인 관리 모듈
-- **app/lyrics/openai_handler.py**
-  - LRC 파일 파싱 및 문맥 기반 OpenAI 번역 기능을 담당하는 모듈
-- **app/media/video_maker.py**
-  - MoviePy, PIL, NumPy를 활용하여 리릭 비디오를 생성하는 모듈
-- **app/export/premiere_exporter.py**
-  - Premiere Pro에서 불러올 수 있는 XML(xmeml) 타임라인 마커 파일 생성 모듈
-- **app/sources/**
-  - `album_art_finder.py`, `genie_handler.py`, `youtube_handler.py` 등 외부 데이터 소스 연동 모듈
-- **app/ui/**
-  - `main_window.py`, `components.py` 등 PyQt6 기반의 사용자 인터페이스 구성 요소
-- **genieapi**
-  - Genie Music API와의 연동을 위한 외부 패키지
+1. 검색창에 `"아티스트 곡명"` 입력
+2. **Genie 결과**에서 원하는 항목 선택
+
+   * 제목 / 아티스트 / LRC 링크 / 앨범 아트 URL 자동 입력
+3. **YouTube 검색 결과**에서 실제 음원 선택
+
+   * 오디오 다운로드용 URL 자동 등록
+4. 앨범 아트는 자동 미리보기 제공
 
 ---
 
-## 문제 해결 및 지원
+## 3. 출력 옵션 설정
 
-- 작업 진행 중 문제가 발생하면 콘솔에 출력되는 `[DEBUG]` 및 `[ERROR]` 메시지를 확인하세요.
-- OpenAI API 키 및 기타 환경 설정이 올바른지 확인하시고, 필요시 GitHub 이슈를 통해 문의해 주세요.
+* 출력 형식 선택
+
+  * **MP4 비디오**
+  * **Premiere/FCP용 XML(xmeml)**
+* 번역 모델 선택 (OpenAI)
+* YouTube 자동 업로드 여부 설정
 
 ---
 
-## 라이선스
+## 4. 리릭 비디오 생성
 
-이 프로젝트는 **MIT 라이선스** 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
+### 버튼: **Generate Video**
+
+아래 작업이 순서대로 실행됩니다:
+
+1. YouTube 오디오(MP3) 다운로드
+2. 앨범 아트 이미지 다운로드
+3. LRC 파일 파싱
+4. OpenAI 기반 문맥 번역
+5. MoviePy/PIL로 영상 합성
+6. 결과물 저장 (`data/output`)
+
+모든 과정은 진행률 바 + 로그로 즉시 확인할 수 있습니다.
+
+---
+
+# 🔧 실사용 운영 가이드
+
+## 💡 1. 최초 준비 체크
+
+* `.env`에 API 키 등록
+* `(선택)` YouTube 업로드용 OAuth 설정
+* 실행 전 `pip install -r requirements.txt`
+* 최초 `python main.py` 실행 시 데이터 폴더 자동 생성됨
+
+---
+
+## 📌 2. 한 세션 작업 흐름
+
+1. 앱 실행
+2. 노래 검색
+3. Genie에서 메타데이터 자동 채우기
+4. YouTube에서 음원 선택
+5. 필요하면 앨범 아트 URL 교체
+6. 번역/출력 옵션 조정
+7. **Generate Video** 클릭
+8. 결과물 확인(`data/output`)
+
+---
+
+## 🧹 3. 작업 후 정리
+
+* 결과물은 **전부 `data/output`**에 모입니다
+* `data/temp`는 자동 정리되며 문제 발생 시 삭제해도 안전
+* 번역 캐시 초기화:
+
+  * `data/cache/translation_cache.json` 삭제
+* 오류 발생 시 GUI 로그 + `[DEBUG]`, `[ERROR]` 콘솔 메시지 참고
+
+---
+
+# 🧱 디렉토리 및 코드 구조
+
+```
+LyricVideoMaker/
+│ main.py                 # GUI 실행 엔트리
+│ .env
+│ requirements.txt
+│
+├─ app/
+│  ├─ pipeline/
+│  │   └─ process_manager.py      # 전체 작업 파이프라인
+│  ├─ lyrics/
+│  │   └─ openai_handler.py       # 번역 + LRC 처리
+│  ├─ media/
+│  │   └─ video_maker.py          # MoviePy 기반 비디오 생성
+│  ├─ export/
+│  │   └─ premiere_exporter.py    # XML(xmeml) 출력
+│  ├─ sources/
+│  │   ├─ genie_handler.py
+│  │   ├─ youtube_handler.py
+│  │   └─ album_art_finder.py
+│  └─ ui/
+│      ├─ main_window.py
+│      └─ components.py
+│
+├─ data/
+│  ├─ temp/       # 중간 파일
+│  ├─ lyrics/     # LRC 파일
+│  ├─ output/     # 최종 MP4, XML
+│  ├─ cache/      # 번역 캐시
+│  └─ config/     # 설정 파일
+```
+
+---
+
+# 🛠️ 문제 해결
+
+* 항상 콘솔 로그의 `[DEBUG]` / `[ERROR]` 확인
+* API 키/환경 변수 확인
+* YouTube 다운로드 오류 시 네트워크 또는 URL 재확인
+* GUI가 멈출 경우 재시작 후 `data/temp` 비우고 다시 시도
+
+---
+
+# 📄 라이선스
+
+본 프로젝트는 **MIT License**를 따릅니다.
+자세한 내용은 [LICENSE](LICENSE) 파일을 확인하세요.

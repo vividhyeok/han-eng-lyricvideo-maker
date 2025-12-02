@@ -25,11 +25,11 @@ from app.media.video_maker import make_lyric_video
 from app.upload.youtube_uploader import upload_video
 
 # 1. 동영상 생성
-video_path = "result/output.mp4"
+video_path = "data/output/output.mp4"
 make_lyric_video(
     audio_path="path/to/audio.mp3",
     album_art_path="path/to/album_art.jpg",
-    lyrics_json_path="temp/lyrics.json",
+    lyrics_json_path="data/temp/lyrics.json",
     output_path=video_path
 )
 

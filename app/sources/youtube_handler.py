@@ -6,6 +6,8 @@ import os
 import yt_dlp
 from youtubesearchpython import VideosSearch
 
+from app.config.paths import TEMP_DIR, ensure_data_dirs
+
 def parse_duration(duration_str: str) -> Optional[int]:
     """YouTube 동영상 길이 문자열(HH:MM:SS)을 초 단위로 변환"""
     if not duration_str:
@@ -118,12 +120,16 @@ def download_youtube_audio(url: str, output_filename: str) -> bool:
     """YouTube 동영상의 오디오를 MP3로 바로 다운로드"""
     try:
         # output_filename = os.path.splitext(output_filename)[0]  # 파일명에 점(.)이 포함된 경우 확장자로 오인하여 잘리는 문제 수정
+        ensure_data_dirs()
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        base_path = os.path.join(TEMP_DIR, output_filename)
+
         ydl_opts = {
             'format': 'bestaudio/best',
             'extract_audio': True,
             'audio_format': 'mp3',
             'audio_quality': '192K',
-            'outtmpl': f'temp/{output_filename}.%(ext)s',  # 확장자 명시적 처리
+            'outtmpl': base_path + '.%(ext)s',  # 확장자 명시적 처리
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -140,7 +146,7 @@ def download_youtube_audio(url: str, output_filename: str) -> bool:
             print(f"[DEBUG] MP3 다운로드 시작: {output_filename}")
             ydl.download([url])
             
-            output_path = f'temp/{output_filename}.mp3'
+            output_path = base_path + '.mp3'
             if os.path.exists(output_path):
                 print(f"[DEBUG] MP3 다운로드 완료: {output_path}")
                 return True

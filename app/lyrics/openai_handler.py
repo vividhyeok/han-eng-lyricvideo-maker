@@ -5,6 +5,8 @@ import traceback
 from itertools import zip_longest
 from typing import Dict, List, Optional
 
+from app.config.paths import TRANSLATION_CACHE_PATH, ensure_data_dirs
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover - 선택적 의존성
@@ -27,7 +29,6 @@ client = None
 if AsyncOpenAI and OPENAI_API_KEY:
     client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-TRANSLATION_CACHE_PATH = os.path.join("temp", "translation_cache.json")
 _translation_cache: Optional[Dict[str, str]] = None
 
 def _ensure_cache_loaded() -> None:
@@ -35,6 +36,7 @@ def _ensure_cache_loaded() -> None:
     if _translation_cache is not None:
         return
 
+    ensure_data_dirs()
     try:
         if os.path.exists(TRANSLATION_CACHE_PATH):
             with open(TRANSLATION_CACHE_PATH, "r", encoding="utf-8") as cache_file:
@@ -49,6 +51,7 @@ def _save_cache() -> None:
     if _translation_cache is None:
         return
 
+    ensure_data_dirs()
     os.makedirs(os.path.dirname(TRANSLATION_CACHE_PATH), exist_ok=True)
     with open(TRANSLATION_CACHE_PATH, "w", encoding="utf-8") as cache_file:
         json.dump(_translation_cache, cache_file, ensure_ascii=False, indent=2)

@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QScrollArea, QFrame,
-    QRadioButton, QButtonGroup, QComboBox, QCheckBox, QMessageBox
+    QRadioButton, QButtonGroup, QComboBox, QCheckBox, QMessageBox,
+    QProgressBar, QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QPixmap, QFont
@@ -10,11 +11,13 @@ import os
 import re
 import sys
 import traceback
+from datetime import datetime
 
+from app.config.paths import LYRICS_DIR, ensure_data_dirs
 from app.pipeline.process_manager import ProcessConfig, ProcessManager
 from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
 from app.sources.youtube_handler import youtube_search
-from app.ui.components import ProgressWindow, YouTubeUploadDialog, load_image_from_url
+from app.ui.components import YouTubeUploadDialog, load_image_from_url
 from app.ui.styles import MODERN_STYLESHEET
 
 
@@ -88,6 +91,10 @@ class ModernMainWindow(QMainWindow):
         self.youtube_results = []
         self.worker = None
         self.selected_genie_duration = None
+        self.is_processing = False
+        self.progress_bar = None
+        self.progress_log = None
+        self.last_progress_message = None
         
         # Create UI
         self.init_ui()
@@ -305,6 +312,24 @@ class ModernMainWindow(QMainWindow):
         self.generate_btn.setFixedHeight(50)
         self.generate_btn.clicked.connect(self.process_selection)
         layout.addWidget(self.generate_btn)
+
+        # Progress Section
+        progress_label = QLabel("📈 Live Progress")
+        progress_label.setObjectName("hint")
+        layout.addWidget(progress_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        self.progress_log = QTextEdit()
+        self.progress_log.setReadOnly(True)
+        self.progress_log.setMinimumHeight(160)
+        self.progress_log.setStyleSheet("font-size: 12px; background: rgba(0,0,0,0.3);")
+        layout.addWidget(self.progress_log)
         
         return panel
     
@@ -493,8 +518,9 @@ class ModernMainWindow(QMainWindow):
             if song_id:
                 lyrics = get_genie_lyrics(song_id)
                 if lyrics:
-                    os.makedirs("result", exist_ok=True)
-                    lrc_path = os.path.join("result", f"{song_id}.lrc")
+                    ensure_data_dirs()
+                    os.makedirs(LYRICS_DIR, exist_ok=True)
+                    lrc_path = os.path.join(LYRICS_DIR, f"{song_id}.lrc")
                     with open(lrc_path, "w", encoding="utf-8") as lrc_file:
                         lrc_file.write(lyrics.strip() + "\n")
                     self.selected_lrc_path = lrc_path
@@ -544,6 +570,45 @@ class ModernMainWindow(QMainWindow):
     def on_youtube_upload_toggled(self, state):
         """Handle YouTube upload toggle"""
         self.youtube_upload_enabled = (state == Qt.CheckState.Checked.value)
+
+    def set_processing_state(self, processing: bool):
+        """Enable/disable controls while processing"""
+        self.is_processing = processing
+        controls = [
+            self.generate_btn,
+            self.search_input,
+            self.model_combo,
+            self.output_video_radio,
+            self.output_xml_radio,
+            self.youtube_upload_checkbox,
+        ]
+        for control in controls:
+            control.setDisabled(processing)
+
+        if self.progress_bar:
+            if processing:
+                self.progress_bar.setVisible(True)
+                self.progress_bar.setValue(0)
+            else:
+                self.progress_bar.setValue(0)
+                self.progress_bar.setVisible(False)
+
+    def append_progress_message(self, message: str):
+        """Append a timestamped message to the progress log"""
+        if not self.progress_log:
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.progress_log.append(f"[{timestamp}] {message}")
+        scrollbar = self.progress_log.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        self.last_progress_message = message
+
+    def update_progress_ui(self, message: str, value: int):
+        if self.progress_bar:
+            clamped = max(0, min(100, value))
+            self.progress_bar.setValue(clamped)
+        if message and message != self.last_progress_message:
+            self.append_progress_message(message)
     
     def process_selection(self):
         """Process the selected song"""
@@ -555,14 +620,15 @@ class ModernMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please select a YouTube audio source")
             return
         
-        # Show progress window
-        self.progress_window = ProgressWindow()
-        self.progress_window.show()
-        self.hide()
+        # Prepare UI for processing
+        if self.progress_log:
+            self.progress_log.clear()
+        self.append_progress_message("🚀 Processing started")
+        self.set_processing_state(True)
         
         # Start worker thread
         self.worker = WorkerThread(self)
-        self.worker.progress.connect(self.progress_window.update_progress)
+        self.worker.progress.connect(self.update_progress_ui)
         self.worker.finished.connect(self.on_process_complete)
         self.worker.error.connect(self.on_error)
         self.worker.upload_requested.connect(self.on_upload_requested)
@@ -570,29 +636,30 @@ class ModernMainWindow(QMainWindow):
     
     def on_process_complete(self):
         """Handle process completion"""
-        self.progress_window.close()
+        self.set_processing_state(False)
+        self.append_progress_message("✅ Video generated successfully")
         QMessageBox.information(self, "Success", "Video generated successfully!")
         self.worker = None
-        self.show()
     
     def on_error(self, error_message):
         """Handle error"""
-        self.progress_window.close()
+        self.set_processing_state(False)
+        self.append_progress_message(f"❌ Error: {error_message}")
         QMessageBox.critical(self, "Error", f"An error occurred:\n{error_message}")
         self.worker = None
-        self.show()
     
     def on_upload_requested(self, video_path, title, artist):
         """Handle YouTube upload request"""
-        self.progress_window.close()
+        self.set_processing_state(False)
+        self.append_progress_message("📤 Video ready for upload")
         self.upload_dialog = YouTubeUploadDialog(video_path, title, artist)
         self.upload_dialog.show()
         self.upload_dialog.destroyed.connect(lambda: self.on_upload_complete())
     
     def on_upload_complete(self):
         """Handle upload completion"""
+        self.append_progress_message("✅ Upload workflow completed")
         self.worker = None
-        self.show()
 
 
 # Alias for compatibility

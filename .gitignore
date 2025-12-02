@@ -1,6 +1,22 @@
+# Bytecode / caches
 __pycache__/
+*.py[cod]
+
+# Local settings / secrets
+.env
+.env.*
+token.pickle
+
+# Runtime data & build artifacts
+data/
 output/
+result/
 results/
 temp/
+temp_test/
 uploader/
-.env
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp

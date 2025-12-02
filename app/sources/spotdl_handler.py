@@ -8,6 +8,8 @@ import subprocess
 from shutil import which
 from typing import Optional
 
+from app.config.paths import TEMP_DIR, ensure_data_dirs
+
 
 def _ensure_spotdl_exists() -> None:
     """Raise helpful error when spotdl CLI is missing."""
@@ -34,7 +36,7 @@ def _run_spotdl_download(query: str, output_template: str) -> subprocess.Complet
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def download_audio_with_spotdl(artist: str, title: str, output_dir: str = "temp") -> Optional[str]:
+def download_audio_with_spotdl(artist: str, title: str, output_dir: str = TEMP_DIR) -> Optional[str]:
     """Download audio using spotDL CLI.
 
     Args:
@@ -47,6 +49,7 @@ def download_audio_with_spotdl(artist: str, title: str, output_dir: str = "temp"
     """
     try:
         _ensure_spotdl_exists()
+        ensure_data_dirs()
         os.makedirs(output_dir, exist_ok=True)
 
         query = f"{artist} - {title}"
@@ -72,7 +75,7 @@ def download_audio_with_spotdl(artist: str, title: str, output_dir: str = "temp"
         return None
 
 
-def download_audio_simple(artist: str, title: str, output_dir: str = "temp") -> Optional[str]:
+def download_audio_simple(artist: str, title: str, output_dir: str = TEMP_DIR) -> Optional[str]:
     """Backward-compatible alias that wraps ``download_audio_with_spotdl``."""
 
     return download_audio_with_spotdl(artist, title, output_dir)
