@@ -13,7 +13,7 @@ import sys
 import traceback
 from datetime import datetime
 
-from app.config.paths import LYRICS_DIR, ensure_data_dirs
+from app.config.paths import LYRICS_DIR, TEMP_DIR, ensure_data_dirs
 from app.pipeline.process_manager import ProcessConfig, ProcessManager
 from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
 from app.sources.youtube_handler import youtube_search
@@ -77,7 +77,7 @@ class ModernMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🎵 Lyric Video Maker - Modern Edition")
-        self.setMinimumSize(1400, 900)
+        self.setMinimumSize(1400, 1200)
         
         # Apply modern stylesheet
         self.setStyleSheet(MODERN_STYLESHEET)
@@ -95,6 +95,8 @@ class ModernMainWindow(QMainWindow):
         self.progress_bar = None
         self.progress_log = None
         self.last_progress_message = None
+        self.queue_items = []  # Queue for batch processing
+        self.current_queue_index = 0
         
         # Create UI
         self.init_ui()
@@ -116,16 +118,16 @@ class ModernMainWindow(QMainWindow):
         content_layout.setSpacing(20)
         content_layout.setContentsMargins(20, 20, 20, 20)
         
-        # Left Sidebar (Settings)
-        left_sidebar = self.create_left_sidebar()
-        content_layout.addWidget(left_sidebar, stretch=1)
+        # Left Panel (Song Details)
+        left_panel = self.create_song_details_panel()
+        content_layout.addWidget(left_panel, stretch=1)
         
-        # Center Area (Search Results)
+        # Center (Search Results + Settings)
         center_area = self.create_center_area()
-        content_layout.addWidget(center_area, stretch=3)
+        content_layout.addWidget(center_area, stretch=2)
         
-        # Right Panel (Details & Actions)
-        right_panel = self.create_right_panel()
+        # Right Panel (Queue + Progress)
+        right_panel = self.create_queue_panel()
         content_layout.addWidget(right_panel, stretch=1)
         
         main_layout.addLayout(content_layout)
@@ -217,6 +219,12 @@ class ModernMainWindow(QMainWindow):
         self.youtube_upload_checkbox.stateChanged.connect(self.on_youtube_upload_toggled)
         layout.addWidget(self.youtube_upload_checkbox)
         
+        # Cleanup Button
+        cleanup_btn = QPushButton("🗑️ Clean Temp Files")
+        cleanup_btn.setMinimumHeight(45)
+        cleanup_btn.clicked.connect(self.clean_temp_files)
+        layout.addWidget(cleanup_btn)
+        
         layout.addStretch()
         
         return sidebar
@@ -246,8 +254,87 @@ class ModernMainWindow(QMainWindow):
         
         return center
     
-    def create_right_panel(self):
-        """Create right panel for song details and actions"""
+    def create_queue_panel(self):
+        """Create queue and progress panel"""
+        panel = QFrame()
+        panel.setObjectName("card")
+        panel.setFixedWidth(350)
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(15)
+        
+        # Queue Header
+        queue_header = QHBoxLayout()
+        queue_title = QLabel("📋 Processing Queue")
+        queue_title.setObjectName("subtitle")
+        queue_header.addWidget(queue_title)
+        
+        self.queue_count_label = QLabel("(0)")
+        self.queue_count_label.setObjectName("hint")
+        queue_header.addWidget(self.queue_count_label)
+        queue_header.addStretch()
+        
+        clear_btn = QPushButton("Clear")
+        clear_btn.setObjectName("secondary")
+        clear_btn.setMaximumWidth(60)
+        clear_btn.clicked.connect(self.clear_queue)
+        queue_header.addWidget(clear_btn)
+        layout.addLayout(queue_header)
+        
+        # Queue List
+        from PyQt6.QtWidgets import QListWidget
+        self.queue_list = QListWidget()
+        self.queue_list.setMinimumHeight(200)
+        self.queue_list.setStyleSheet("""
+            QListWidget {
+                background: rgba(0, 0, 0, 0.3);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QListWidget::item:selected {
+                background: rgba(0, 212, 255, 0.3);
+            }
+            QListWidget::item:hover {
+                background: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        layout.addWidget(self.queue_list)
+        
+        # Start Batch Button
+        self.start_batch_btn = QPushButton("▶ Start Batch Processing")
+        self.start_batch_btn.setMinimumHeight(50)
+        self.start_batch_btn.setObjectName("primary")
+        self.start_batch_btn.setEnabled(False)
+        self.start_batch_btn.clicked.connect(self.start_batch_processing)
+        layout.addWidget(self.start_batch_btn)
+        
+        # Progress Section
+        progress_label = QLabel("📈 Live Progress")
+        progress_label.setObjectName("hint")
+        layout.addWidget(progress_label)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
+        self.progress_log = QTextEdit()
+        self.progress_log.setReadOnly(True)
+        self.progress_log.setMinimumHeight(200)
+        self.progress_log.setStyleSheet("font-size: 12px; background: rgba(0,0,0,0.3);")
+        layout.addWidget(self.progress_log)
+        
+        return panel
+    
+    def create_song_details_panel(self):
+        """Create song details panel"""
         panel = QFrame()
         panel.setObjectName("card")
         panel.setFixedWidth(350)
@@ -305,34 +392,17 @@ class ModernMainWindow(QMainWindow):
         
         layout.addWidget(info_frame)
         
-        layout.addStretch()
-        
-        # Action Buttons
-        self.generate_btn = QPushButton("🎬 Generate Video")
-        self.generate_btn.setFixedHeight(50)
-        self.generate_btn.clicked.connect(self.process_selection)
-        layout.addWidget(self.generate_btn)
-
-        # Progress Section
-        progress_label = QLabel("📈 Live Progress")
-        progress_label.setObjectName("hint")
-        layout.addWidget(progress_label)
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setVisible(False)
-        layout.addWidget(self.progress_bar)
-
-        self.progress_log = QTextEdit()
-        self.progress_log.setReadOnly(True)
-        self.progress_log.setMinimumHeight(160)
-        self.progress_log.setStyleSheet("font-size: 12px; background: rgba(0,0,0,0.3);")
-        layout.addWidget(self.progress_log)
-        
-        return panel
-    
+        # Add to Queue Button
+        self.add_queue_btn = QPushButton("➕ Add to Queue")
+        self.add_queue_btn.setMinimumHeight(45)
+        self.add_queue_btn.setEnabled(False)
+        self.add_queue_btn.clicked.connect(self.add_to_queue)
+        layout.addWidget(self.add_queue_btn)
+
+        layout.addStretch()
+        
+        return panel
+    
     def search_song(self):
         """Search for songs on Genie"""
         query = self.search_input.text().strip()
@@ -500,6 +570,7 @@ class ModernMainWindow(QMainWindow):
         self.artist_input.setText(artist)
         self.album_cover_input.setText(album_art_url)
         self.selected_genie_duration = duration
+        self.selected_genie_id = song_id  # Store song_id for queue
 
         # Automatically search YouTube with details
         try:
@@ -529,6 +600,9 @@ class ModernMainWindow(QMainWindow):
                     print("[WARN] 가사 데이터를 가져오지 못했습니다.")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to download lyrics: {e}")
+        
+        # Enable Add to Queue button
+        self.check_ready_to_add()
     
     def on_youtube_selected(self, idx):
         """Handle YouTube result selection"""
@@ -660,7 +734,37 @@ class ModernMainWindow(QMainWindow):
         """Handle upload completion"""
         self.append_progress_message("✅ Upload workflow completed")
         self.worker = None
+    
+    def clean_temp_files(self):
+        """Clean temporary files"""
+        import glob
+        
+        reply = QMessageBox.question(
+            self, "확인", 
+            "임시 파일을 모두 삭제하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                files = glob.glob(os.path.join(TEMP_DIR, "*"))
+                count = len(files)
+                for f in files:
+                    try:
+                        if os.path.isfile(f):
+                            os.remove(f)
+                    except Exception as e:
+                        print(f"[WARN] Failed to delete {f}: {e}")
+                
+                self.append_progress_message(f"🗑️ Cleaned {count} temp files")
+                QMessageBox.information(self, "완료", f"{count}개의 임시 파일을 삭제했습니다.")
+            except Exception as e:
+                QMessageBox.critical(self, "오류", f"파일 삭제 중 오류 발생:\n{e}")
 
+
+# Inject queue methods
+from app.ui.queue_methods import inject_queue_methods
+inject_queue_methods(ModernMainWindow)
 
 # Alias for compatibility
 MainWindow = ModernMainWindow

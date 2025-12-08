@@ -16,6 +16,9 @@ results/
 temp/
 temp_test/
 uploader/
+ffmpeg-8.0.1-essentials_build/
+*.zip
+*.mp4
 
 # IDE/editor files
 .vscode/

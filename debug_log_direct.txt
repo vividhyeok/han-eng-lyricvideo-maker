@@ -1,0 +1,338 @@
+Starting translation test...
+[DEBUG] LRC 파일 파싱 시작: C:\Users\user\Desktop\1203\han-eng-lyricvideo-maker\test_user_lyrics.lrc
+[DEBUG] LRC 내용 미리보기 (첫 500자): [00:00.90] (AH)
+[00:42.40] I, drowning,
+[00:45.30] myself, cryin’
+[00:48.40] 아
+[00:50.60] 여긴
+[00:52.20] 뻔함
+[00:53.90] 뿐이
+[00:55.70] 난 뻔한 작전엔 안 속네
+[00:57.30] Copy를 할 거라면 제대로 해
+[00:59.00] 여긴 미쳤어 fanboy의 fan
+[01:00.70] 바이럴 마케팅은 지루해
+[01:02.50] *대로 막 써도 안 팔려 네 곡이
+[01:04.40] 생각은 주머니 돈처럼 꼬깃
+[01:05.90] 니가 때려 박는 돈 난 개처럼 써
+[01:07.70] *밥들이 설쳐, 성공에 의미는 없어
+[01:09.90] 다시 말해 없는 self-esteem
+[01:11.30] 다시 말해 한심하기 짝이 없는 kids
+[01:13.70] 2017 보고 자란 거랑 달라 왠지
+[01:15.10] 베껴 실루엣 누군가의 type s**t
+[01:16.70] Extra million
+
+[DEBUG] Using translation model: gpt-4o
+[DEBUG] Parsed JSON type: <class 'list'>
+[DEBUG] First item type: <class 'dict'>
+[DEBUG] First item content: {'original': '(AH)', 'translated': '(AH)'}
+[DEBUG] Aligning 51 items to 51 input lines
+[DEBUG] Matched: '(AH)' -> Index 0
+[DEBUG] Matched: 'I, drowning,' -> Index 1
+[DEBUG] Matched: 'myself, cryin’' -> Index 2
+[DEBUG] Matched: '아' -> Index 3
+[DEBUG] Matched: '여긴' -> Index 4
+[DEBUG] Matched: '뻔함' -> Index 5
+[DEBUG] Matched: '뿐이' -> Index 6
+[DEBUG] Matched: '난 뻔한 작전엔 안 속네' -> Index 7
+[DEBUG] Matched: 'Copy를 할 거라면 제대로 해' -> Index 8
+[DEBUG] Matched: '여긴 미쳤어 fanboy의 fan' -> Index 9
+[DEBUG] Matched: '바이럴 마케팅은 지루해' -> Index 10
+[DEBUG] Matched: '*대로 막 써도 안 팔려 네 곡이' -> Index 11
+[DEBUG] Matched: '생각은 주머니 돈처럼 꼬깃' -> Index 12
+[DEBUG] Matched: '니가 때려 박는 돈 난 개처럼 써' -> Index 13
+[DEBUG] Matched: '*밥들이 설쳐, 성공에 의미는 없어' -> Index 14
+[DEBUG] Matched: '다시 말해 없는 self-esteem' -> Index 15
+[DEBUG] Matched: '다시 말해 한심하기 짝이 없는 kids' -> Index 16
+[DEBUG] Matched: '2017 보고 자란 거랑 달라 왠지' -> Index 17
+[DEBUG] Matched: '베껴 실루엣 누군가의 type s**t' -> Index 18
+[DEBUG] Matched: 'Extra million' -> Index 19
+[DEBUG] Matched: 'Drama 빌려' -> Index 20
+[DEBUG] Matched: 'Tryna see ya' -> Index 21
+[DEBUG] Matched: '너의 얘기야' -> Index 22
+[DEBUG] Matched: 'Tragedy' -> Index 23
+[DEBUG] Matched: 'Yeah you gotta rewind' -> Index 24
+[DEBUG] Matched: 'I, drowning,' -> Index 25
+[DEBUG] Matched: 'myself, cryin’' -> Index 26
+[DEBUG] Matched: '아' -> Index 27
+[DEBUG] Matched: '여긴' -> Index 28
+[DEBUG] Matched: '뻔함' -> Index 29
+[DEBUG] Matched: '뿐이' -> Index 30
+[DEBUG] Matched: 'APGU에서 한 번 돌리고' -> Index 31
+[DEBUG] Matched: '흐름 안 끊기게 baddie랑 rodeo' -> Index 32
+[DEBUG] Matched: '가로수길 사이사이를 가로질러' -> Index 33
+[DEBUG] Matched: 'ITW Bolero로 hole in one' -> Index 34
+[DEBUG] Matched: 'K O R E A에 only one' -> Index 35
+[DEBUG] Matched: 'Seoul City에 Tony Montana' -> Index 36
+[DEBUG] Matched: '말뿐이었던 말쟁이 친구들 뭐 되나 봐?' -> Index 37
+[DEBUG] Matched: 'I cannot vibe with 짠돌이s' -> Index 38
+[DEBUG] Matched: '공손하게 갈 길 가세요' -> Index 39
+[DEBUG] Matched: '실례할게요라고 말해 줘 집에 가세요' -> Index 40
+[DEBUG] Matched: '이마에 별 다섯 개짜리 lit' -> Index 41
+[DEBUG] Matched: '머리엔 새 두 마리 빙빙' -> Index 42
+[DEBUG] Matched: '돌아버릴 정도로 안 놀 거라면 peace out' -> Index 43
+[DEBUG] Matched: '정신 안 놓을 거라면 peace out' -> Index 44
+[DEBUG] Matched: 'I, drowning,' -> Index 45
+[DEBUG] Matched: 'myself, cryin’' -> Index 46
+[DEBUG] Matched: '아' -> Index 47
+[DEBUG] Matched: '여긴' -> Index 48
+[DEBUG] Matched: '뻔함' -> Index 49
+[DEBUG] Matched: '뿐이' -> Index 50
+[DEBUG] JSON 파일 생성 완료: C:\Users\user\Desktop\1203\han-eng-lyricvideo-maker\test_user_lyrics.json
+Translation completed. Result saved to C:\Users\user\Desktop\1203\han-eng-lyricvideo-maker\test_user_lyrics.json
+[
+  {
+    "start_time": 0.9,
+    "original": "(AH)",
+    "english": "(AH)"
+  },
+  {
+    "start_time": 42.4,
+    "original": "I, drowning,",
+    "english": "I, drowning,"
+  },
+  {
+    "start_time": 45.3,
+    "original": "myself, cryin’",
+    "english": "myself, cryin’"
+  },
+  {
+    "start_time": 48.4,
+    "original": "아",
+    "english": "Ah"
+  },
+  {
+    "start_time": 50.6,
+    "original": "여긴",
+    "english": "Here,"
+  },
+  {
+    "start_time": 52.2,
+    "original": "뻔함",
+    "english": "it's all the same,"
+  },
+  {
+    "start_time": 53.9,
+    "original": "뿐이",
+    "english": "nothing but,"
+  },
+  {
+    "start_time": 55.7,
+    "original": "난 뻔한 작전엔 안 속네",
+    "english": "I don't fall for obvious plans"
+  },
+  {
+    "start_time": 57.3,
+    "original": "Copy를 할 거라면 제대로 해",
+    "english": "If you're gonna copy, do it right"
+  },
+  {
+    "start_time": 59.0,
+    "original": "여긴 미쳤어 fanboy의 fan",
+    "english": "It's crazy here, fanboy of a fan"
+  },
+  {
+    "start_time": 60.7,
+    "original": "바이럴 마케팅은 지루해",
+    "english": "Viral marketing is boring"
+  },
+  {
+    "start_time": 62.5,
+    "original": "*대로 막 써도 안 팔려 네 곡이",
+    "english": "Even if you write as you please, your song won't sell"
+  },
+  {
+    "start_time": 64.4,
+    "original": "생각은 주머니 돈처럼 꼬깃",
+    "english": "Thoughts crumpled like money in a pocket"
+  },
+  {
+    "start_time": 65.9,
+    "original": "니가 때려 박는 돈 난 개처럼 써",
+    "english": "The money you slam down, I spend like a dog"
+  },
+  {
+    "start_time": 67.7,
+    "original": "*밥들이 설쳐, 성공에 의미는 없어",
+    "english": "Fools act up, success means nothing"
+  },
+  {
+    "start_time": 69.9,
+    "original": "다시 말해 없는 self-esteem",
+    "english": "In other words, no self-esteem"
+  },
+  {
+    "start_time": 71.3,
+    "original": "다시 말해 한심하기 짝이 없는 kids",
+    "english": "In other words, pathetic kids"
+  },
+  {
+    "start_time": 73.7,
+    "original": "2017 보고 자란 거랑 달라 왠지",
+    "english": "Somehow different from what grew up watching 2017"
+  },
+  {
+    "start_time": 75.1,
+    "original": "베껴 실루엣 누군가의 type s**t",
+    "english": "Copying someone's silhouette type s**t"
+  },
+  {
+    "start_time": 76.7,
+    "original": "Extra million",
+    "english": "Extra million"
+  },
+  {
+    "start_time": 77.4,
+    "original": "Drama 빌려",
+    "english": "Borrowing drama"
+  },
+  {
+    "start_time": 78.2,
+    "original": "Tryna see ya",
+    "english": "Tryna see ya"
+  },
+  {
+    "start_time": 79.0,
+    "original": "너의 얘기야",
+    "english": "It's your story"
+  },
+  {
+    "start_time": 79.7,
+    "original": "Tragedy",
+    "english": "Tragedy"
+  },
+  {
+    "start_time": 80.4,
+    "original": "Yeah you gotta rewind",
+    "english": "Yeah you gotta rewind"
+  },
+  {
+    "start_time": 82.9,
+    "original": "I, drowning,",
+    "english": "I, drowning,"
+  },
+  {
+    "start_time": 86.5,
+    "original": "myself, cryin’",
+    "english": "myself, cryin’"
+  },
+  {
+    "start_time": 89.7,
+    "original": "아",
+    "english": "Ah"
+  },
+  {
+    "start_time": 91.8,
+    "original": "여긴",
+    "english": "Here,"
+  },
+  {
+    "start_time": 93.3,
+    "original": "뻔함",
+    "english": "it's all the same,"
+  },
+  {
+    "start_time": 95.2,
+    "original": "뿐이",
+    "english": "nothing but,"
+  },
+  {
+    "start_time": 97.2,
+    "original": "APGU에서 한 번 돌리고",
+    "english": "Spin it once in APGU"
+  },
+  {
+    "start_time": 98.7,
+    "original": "흐름 안 끊기게 baddie랑 rodeo",
+    "english": "With a baddie, rodeo without breaking the flow"
+  },
+  {
+    "start_time": 100.6,
+    "original": "가로수길 사이사이를 가로질러",
+    "english": "Cutting through the streets of Garosugil"
+  },
+  {
+    "start_time": 102.3,
+    "original": "ITW Bolero로 hole in one",
+    "english": "Hole in one with ITW Bolero"
+  },
+  {
+    "start_time": 103.9,
+    "original": "K O R E A에 only one",
+    "english": "Only one in K O R E A"
+  },
+  {
+    "start_time": 105.9,
+    "original": "Seoul City에 Tony Montana",
+    "english": "Tony Montana in Seoul City"
+  },
+  {
+    "start_time": 107.8,
+    "original": "말뿐이었던 말쟁이 친구들 뭐 되나 봐?",
+    "english": "Those talkative friends, did they become anything?"
+  },
+  {
+    "start_time": 110.1,
+    "original": "I cannot vibe with 짠돌이s",
+    "english": "I cannot vibe with cheapskates"
+  },
+  {
+    "start_time": 112.1,
+    "original": "공손하게 갈 길 가세요",
+    "english": "Politely, go your way"
+  },
+  {
+    "start_time": 113.8,
+    "original": "실례할게요라고 말해 줘 집에 가세요",
+    "english": "Say excuse me, go home"
+  },
+  {
+    "start_time": 116.4,
+    "original": "이마에 별 다섯 개짜리 lit",
+    "english": "Five-star lit on the forehead"
+  },
+  {
+    "start_time": 118.3,
+    "original": "머리엔 새 두 마리 빙빙",
+    "english": "Two birds spinning around the head"
+  },
+  {
+    "start_time": 119.9,
+    "original": "돌아버릴 정도로 안 놀 거라면 peace out",
+    "english": "If you won't play till you go crazy, peace out"
+  },
+  {
+    "start_time": 122.5,
+    "original": "정신 안 놓을 거라면 peace out",
+    "english": "If you won't lose your mind, peace out"
+  },
+  {
+    "start_time": 124.5,
+    "original": "I, drowning,",
+    "english": "I, drowning,"
+  },
+  {
+    "start_time": 127.6,
+    "original": "myself, cryin’",
+    "english": "myself, cryin’"
+  },
+  {
+    "start_time": 130.7,
+    "original": "아",
+    "english": "Ah"
+  },
+  {
+    "start_time": 132.9,
+    "original": "여긴",
+    "english": "Here,"
+  },
+  {
+    "start_time": 134.5,
+    "original": "뻔함",
+    "english": "it's all the same,"
+  },
+  {
+    "start_time": 136.3,
+    "original": "뿐이",
+    "english": "nothing but,"
+  }
+]
