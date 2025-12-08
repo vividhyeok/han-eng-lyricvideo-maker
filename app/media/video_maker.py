@@ -179,16 +179,18 @@ def prepare_base_frame(background_img: Image.Image) -> Image.Image:
     overlay = Image.new('RGBA', frame.size, (0, 0, 0, 160))
     base = Image.alpha_composite(blurred, overlay)
     
-    # Draw Album Art slightly above center
+    # Draw Album Art
     # Resize album art to be smaller (e.g., 500x500)
     art_size = (500, 500)
     art_img = background_img.resize(art_size, Image.Resampling.LANCZOS).convert('RGBA')
     
-    # Calculate position (Center X, Slightly above Center Y)
-    # Frame center is (960, 540)
-    # Let's put the center of the album art at Y=400
+    # Layout Calculation:
+    # Total Height approx: 500 (Art) + 50 (Gap) + 70 (Kor) + 30 (Gap) + 65 (Eng) = ~715
+    # Frame Height: 1080
+    # Margin = (1080 - 715) / 2 = ~182
+    
     art_x = (frame.width - art_size[0]) // 2
-    art_y = (frame.height // 2) - art_size[1] - 50 # Shift up
+    art_y = 180 # Top margin
     
     base.paste(art_img, (art_x, art_y), art_img)
     
@@ -210,21 +212,13 @@ def create_lyric_frame(base_frame: Image.Image, lyric: Dict[str, str], fonts: Tu
     korean_lines = _wrap_text(draw, original_text, korean_font, max_text_width)
     english_lines = _wrap_text(draw, translated_text, english_font, max_text_width)
 
-    # Position lyrics below the album art
-    # Album art bottom is around Y=400 + 500/2 = 650? No.
-    # Art Y was (540 - 250 - 50) = 240. Bottom is 240 + 500 = 740.
-    # Let's adjust.
-    # Frame height 1080. Center 540.
-    # Album art size 500x500.
-    # If we want it slightly above center, let's say center of art is at Y=400.
-    # Top = 400 - 250 = 150. Bottom = 400 + 250 = 650.
+    # Position lyrics based on calculated layout
+    # Art Bottom is 180 + 500 = 680
+    # Gap 50 -> Korean Top 730. Center approx 730 + 35 = 765
+    # Gap 30 -> English Top 730 + 70 + 30 = 830. Center approx 830 + 32 = 862
     
-    # Lyrics should start below 650.
-    # Let's put Korean lyrics center at Y=750
-    # English lyrics center at Y=850
-    
-    _draw_multiline_centered(draw, korean_lines, korean_font, frame.width, 750)
-    _draw_multiline_centered(draw, english_lines, english_font, frame.width, 880)
+    _draw_multiline_centered(draw, korean_lines, korean_font, frame.width, 765)
+    _draw_multiline_centered(draw, english_lines, english_font, frame.width, 870)
 
     return frame.convert('RGB')
 
@@ -352,6 +346,8 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
                 "-i", concat_list_path,
                 "-i", audio_path,
                 "-c:v", "libx264",
+                "-profile:v", "main",
+                "-level", "4.0",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-pix_fmt", "yuv420p",

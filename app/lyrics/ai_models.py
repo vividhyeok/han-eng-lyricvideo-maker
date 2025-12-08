@@ -46,9 +46,13 @@ class OpenAIModel(TranslationModel):
             return lyrics
         
         system_prompt = self._get_system_prompt()
+        
+        # Create indexed lyrics for better AI guidance
+        indexed_lyrics = [{"index": i, "text": line} for i, line in enumerate(lyrics)]
+        
         user_content = {
             "context": f"Artist: {artist}, Title: {title}",
-            "lyrics": lyrics
+            "lyrics": indexed_lyrics
         }
         
         try:
@@ -58,7 +62,7 @@ class OpenAIModel(TranslationModel):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(user_content, ensure_ascii=False)}
                 ],
-                temperature=0.3,
+                temperature=0.1,
             )
             
             content = response.choices[0].message.content.strip()
@@ -71,8 +75,31 @@ class OpenAIModel(TranslationModel):
                 content = content.strip()
             
             try:
-                translated_list = json.loads(content)
+                parsed_content = json.loads(content)
+                translated_list = []
+                
+                # Handle new object format
+                if isinstance(parsed_content, list) and len(parsed_content) > 0 and isinstance(parsed_content[0], dict):
+                    print("[DEBUG] AI returned object list format")
+                    # Sort by index just in case
+                    parsed_content.sort(key=lambda x: x.get('index', 0))
+                    # Create a map
+                    trans_map = {item.get('index'): item.get('translated', '') for item in parsed_content}
+                    
+                    for i in range(len(lyrics)):
+                        translated_list.append(trans_map.get(i, "")) # Empty string if missing
+                        
+                elif isinstance(parsed_content, list):
+                    print("[DEBUG] AI returned string list format (fallback)")
+                    # Fallback for string array
+                    translated_list = [str(line).strip() for line in parsed_content]
+                else:
+                    print("[DEBUG] AI returned unknown format (fallback)")
+                    # Fallback
+                    translated_list = [line.strip() for line in content.splitlines() if line.strip()]
+            
             except json.JSONDecodeError:
+                print("[DEBUG] JSON decode error (fallback)")
                 translated_list = [line.strip() for line in content.splitlines() if line.strip()]
             
             return translated_list
@@ -83,20 +110,26 @@ class OpenAIModel(TranslationModel):
     
     def _get_system_prompt(self) -> str:
         return (
-            "You are a professional Korean rap/hip-hop lyric translator. "
-            "Translate the following Korean song lyrics into natural, fluent English. "
-            "IMPORTANT RULES:\n"
-            "1. Return a JSON array of strings with EXACTLY the same number of lines as input.\n"
-            "2. For lines with mixed Korean-English: PRESERVE all existing English words/phrases exactly as they are, only translate Korean parts.\n"
-            "3. For 100% English lines: keep them unchanged.\n"
-            "4. For rap lyrics with wordplay/slang: maintain the vibe and flow, use natural English equivalents.\n"
-            "5. When sentences span multiple lines: ensure translation flows naturally across lines.\n"
-            "6. Do NOT include original Korean text in output. Output English ONLY.\n"
-            "7. Maintain rhythm, emotion, and cultural context.\n"
-            "Examples:\n"
-            "- 'I'm on the 탑' → 'I'm on the top'\n"
-            "- '나는 rapper야' → 'I'm a rapper'\n"
-            "- 'Yeah yeah 시작해볼까' → 'Yeah yeah let's get started'"
+            "You are a strict lyric translation engine specialized in HIP-HOP/RAP. Your priority is 1:1 LINE ALIGNMENT.\n"
+            "You will receive a list of objects: [{'index': 0, 'text': '...'}, ...]\n"
+            "You MUST return a JSON array of objects: [{'index': 0, 'translated': '...'}, ...]\n"
+            "\n"
+            "CRITICAL RULES:\n"
+            "1. The output array MUST have the EXACT SAME length as the input array.\n"
+            "2. Every 'index' from the input MUST appear in the output with a translation.\n"
+            "3. DO NOT MERGE LINES. If the input has 3 short lines, output 3 short lines.\n"
+            "4. HANDLE ENJAMBMENT (Split Sentences):\n"
+            "   - If a sentence is split across lines, understand the full context from adjacent lines.\n"
+            "   - Translate the fragment in the current line so it flows naturally into the next line.\n"
+            "   - Example Input: ['Yo, ZENE놈은 양산', '하나 없던 채로 시작해서']\n"
+            "   - Example Output: ['Yo, ZENE started without', 'even a single parasol']\n"
+            "5. TONE & STYLE (HIP-HOP):\n"
+            "   - Use slang, street language, and AAVE where appropriate.\n"
+            "   - DO NOT CENSOR profanity. Keep the translation raw and aggressive if the original is.\n"
+            "   - Interpret context markers like '여긴' (Here) based on the genre. In Hip-hop, 'Here' often refers to the 'scene', 'game', or 'industry'.\n"
+            "6. For mixed Korean-English lines: Keep English AS IS, translate Korean.\n"
+            "7. For 100% English lines: Copy them exactly.\n"
+            "8. Output English ONLY (no Korean characters in 'translated' field).\n"
         )
 
 
@@ -126,9 +159,13 @@ class DeepSeekModel(TranslationModel):
             return lyrics
         
         system_prompt = self._get_system_prompt()
+        
+        # Create indexed lyrics for better AI guidance
+        indexed_lyrics = [{"index": i, "text": line} for i, line in enumerate(lyrics)]
+        
         user_content = {
             "context": f"Artist: {artist}, Title: {title}",
-            "lyrics": lyrics
+            "lyrics": indexed_lyrics
         }
         
         try:
@@ -138,7 +175,7 @@ class DeepSeekModel(TranslationModel):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": json.dumps(user_content, ensure_ascii=False)}
                 ],
-                temperature=0.3,
+                temperature=0.1,
             )
             
             content = response.choices[0].message.content.strip()
@@ -151,7 +188,26 @@ class DeepSeekModel(TranslationModel):
                 content = content.strip()
             
             try:
-                translated_list = json.loads(content)
+                parsed_content = json.loads(content)
+                translated_list = []
+                
+                # Handle new object format
+                if isinstance(parsed_content, list) and len(parsed_content) > 0 and isinstance(parsed_content[0], dict):
+                    # Sort by index just in case
+                    parsed_content.sort(key=lambda x: x.get('index', 0))
+                    # Create a map
+                    trans_map = {item.get('index'): item.get('translated', '') for item in parsed_content}
+                    
+                    for i in range(len(lyrics)):
+                        translated_list.append(trans_map.get(i, "")) # Empty string if missing
+                        
+                elif isinstance(parsed_content, list):
+                    # Fallback for string array
+                    translated_list = [str(line).strip() for line in parsed_content]
+                else:
+                    # Fallback
+                    translated_list = [line.strip() for line in content.splitlines() if line.strip()]
+            
             except json.JSONDecodeError:
                 translated_list = [line.strip() for line in content.splitlines() if line.strip()]
             
@@ -163,20 +219,26 @@ class DeepSeekModel(TranslationModel):
     
     def _get_system_prompt(self) -> str:
         return (
-            "You are a professional Korean rap/hip-hop lyric translator. "
-            "Translate the following Korean song lyrics into natural, fluent English. "
-            "IMPORTANT RULES:\n"
-            "1. Return a JSON array of strings with EXACTLY the same number of lines as input.\n"
-            "2. For lines with mixed Korean-English: PRESERVE all existing English words/phrases exactly as they are, only translate Korean parts.\n"
-            "3. For 100% English lines: keep them unchanged.\n"
-            "4. For rap lyrics with wordplay/slang: maintain the vibe and flow, use natural English equivalents.\n"
-            "5. When sentences span multiple lines: ensure translation flows naturally across lines.\n"
-            "6. Do NOT include original Korean text in output. Output English ONLY.\n"
-            "7. Maintain rhythm, emotion, and cultural context.\n"
-            "Examples:\n"
-            "- 'I'm on the 탑' → 'I'm on the top'\n"
-            "- '나는 rapper야' → 'I'm a rapper'\n"
-            "- 'Yeah yeah 시작해볼까' → 'Yeah yeah let's get started'"
+            "You are a strict lyric translation engine specialized in HIP-HOP/RAP. Your priority is 1:1 LINE ALIGNMENT.\n"
+            "You will receive a list of objects: [{'index': 0, 'text': '...'}, ...]\n"
+            "You MUST return a JSON array of objects: [{'index': 0, 'translated': '...'}, ...]\n"
+            "\n"
+            "CRITICAL RULES:\n"
+            "1. The output array MUST have the EXACT SAME length as the input array.\n"
+            "2. Every 'index' from the input MUST appear in the output with a translation.\n"
+            "3. DO NOT MERGE LINES. If the input has 3 short lines, output 3 short lines.\n"
+            "4. HANDLE ENJAMBMENT (Split Sentences):\n"
+            "   - If a sentence is split across lines, understand the full context from adjacent lines.\n"
+            "   - Translate the fragment in the current line so it flows naturally into the next line.\n"
+            "   - Example Input: ['Yo, ZENE놈은 양산', '하나 없던 채로 시작해서']\n"
+            "   - Example Output: ['Yo, ZENE started without', 'even a single parasol']\n"
+            "5. TONE & STYLE (HIP-HOP):\n"
+            "   - Use slang, street language, and AAVE where appropriate.\n"
+            "   - DO NOT CENSOR profanity. Keep the translation raw and aggressive if the original is.\n"
+            "   - Interpret context markers like '여긴' (Here) based on the genre. In Hip-hop, 'Here' often refers to the 'scene', 'game', or 'industry'.\n"
+            "6. For mixed Korean-English lines: Keep English AS IS, translate Korean.\n"
+            "7. For 100% English lines: Copy them exactly.\n"
+            "8. Output English ONLY (no Korean characters in 'translated' field).\n"
         )
 
 
@@ -204,9 +266,13 @@ class GeminiModel(TranslationModel):
             return lyrics
         
         system_prompt = self._get_system_prompt()
+        
+        # Create indexed lyrics for better AI guidance
+        indexed_lyrics = [{"index": i, "text": line} for i, line in enumerate(lyrics)]
+        
         user_content = {
             "context": f"Artist: {artist}, Title: {title}",
-            "lyrics": lyrics
+            "lyrics": indexed_lyrics
         }
         
         prompt = f"{system_prompt}\n\n{json.dumps(user_content, ensure_ascii=False)}"
@@ -223,7 +289,26 @@ class GeminiModel(TranslationModel):
                 content = content.strip()
             
             try:
-                translated_list = json.loads(content)
+                parsed_content = json.loads(content)
+                translated_list = []
+                
+                # Handle new object format
+                if isinstance(parsed_content, list) and len(parsed_content) > 0 and isinstance(parsed_content[0], dict):
+                    # Sort by index just in case
+                    parsed_content.sort(key=lambda x: x.get('index', 0))
+                    # Create a map
+                    trans_map = {item.get('index'): item.get('translated', '') for item in parsed_content}
+                    
+                    for i in range(len(lyrics)):
+                        translated_list.append(trans_map.get(i, "")) # Empty string if missing
+                        
+                elif isinstance(parsed_content, list):
+                    # Fallback for string array
+                    translated_list = [str(line).strip() for line in parsed_content]
+                else:
+                    # Fallback
+                    translated_list = [line.strip() for line in content.splitlines() if line.strip()]
+            
             except json.JSONDecodeError:
                 translated_list = [line.strip() for line in content.splitlines() if line.strip()]
             
@@ -235,21 +320,26 @@ class GeminiModel(TranslationModel):
     
     def _get_system_prompt(self) -> str:
         return (
-            "You are a professional Korean rap/hip-hop lyric translator. "
-            "Translate the following Korean song lyrics into natural, fluent English. "
-            "IMPORTANT RULES:\n"
-            "1. Return a JSON array of strings with EXACTLY the same number of lines as input.\n"
-            "2. For lines with mixed Korean-English: PRESERVE all existing English words/phrases exactly as they are, only translate Korean parts.\n"
-            "3. For 100% English lines: keep them unchanged.\n"
-            "4. For rap lyrics with wordplay/slang: maintain the vibe and flow, use natural English equivalents.\n"
-            "5. When sentences span multiple lines: ensure translation flows naturally across lines.\n"
-            "6. Do NOT include original Korean text in output. Output English ONLY.\n"
-            "7. Maintain rhythm, emotion, and cultural context.\n"
-            "8. Ensure strict 1:1 mapping between input and output lines.\n"
-            "Examples:\n"
-            "- 'I'm on the 탑' → 'I'm on the top'\n"
-            "- '나는 rapper야' → 'I'm a rapper'\n"
-            "- 'Yeah yeah 시작해볼까' → 'Yeah yeah let's get started'"
+            "You are a strict lyric translation engine specialized in HIP-HOP/RAP. Your priority is 1:1 LINE ALIGNMENT.\n"
+            "You will receive a list of objects: [{'index': 0, 'text': '...'}, ...]\n"
+            "You MUST return a JSON array of objects: [{'index': 0, 'translated': '...'}, ...]\n"
+            "\n"
+            "CRITICAL RULES:\n"
+            "1. The output array MUST have the EXACT SAME length as the input array.\n"
+            "2. Every 'index' from the input MUST appear in the output with a translation.\n"
+            "3. DO NOT MERGE LINES. If the input has 3 short lines, output 3 short lines.\n"
+            "4. HANDLE ENJAMBMENT (Split Sentences):\n"
+            "   - If a sentence is split across lines, understand the full context from adjacent lines.\n"
+            "   - Translate the fragment in the current line so it flows naturally into the next line.\n"
+            "   - Example Input: ['Yo, ZENE놈은 양산', '하나 없던 채로 시작해서']\n"
+            "   - Example Output: ['Yo, ZENE started without', 'even a single parasol']\n"
+            "5. TONE & STYLE (HIP-HOP):\n"
+            "   - Use slang, street language, and AAVE where appropriate.\n"
+            "   - DO NOT CENSOR profanity. Keep the translation raw and aggressive if the original is.\n"
+            "   - Interpret context markers like '여긴' (Here) based on the genre. In Hip-hop, 'Here' often refers to the 'scene', 'game', or 'industry'.\n"
+            "6. For mixed Korean-English lines: Keep English AS IS, translate Korean.\n"
+            "7. For 100% English lines: Copy them exactly.\n"
+            "8. Output English ONLY (no Korean characters in 'translated' field).\n"
         )
 
 
