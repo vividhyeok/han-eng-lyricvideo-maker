@@ -1,3 +1,11 @@
+import os
+import json
+import traceback
+import numpy as np
+from typing import List, Tuple, Optional, Sequence
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from moviepy.editor import AudioFileClip, ImageClip, CompositeVideoClip, vfx
+
 from app.config.paths import TEMP_DIR, ensure_data_dirs
 
 def draw_outlined_text(draw: ImageDraw.ImageDraw, pos: Tuple[float, float], text: str, font: ImageFont.ImageFont,
