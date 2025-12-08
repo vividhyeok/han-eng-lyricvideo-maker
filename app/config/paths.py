@@ -17,6 +17,11 @@ CONFIG_DIR = os.path.join(DATA_DIR, "config")
 TRANSLATION_CACHE_PATH = os.path.join(CACHE_DIR, "translation_cache.json")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "config.json")
 
+# FFMPEG paths
+FFMPEG_DIR = os.path.join(BASE_DIR, "ffmpeg-8.0.1-essentials_build", "bin")
+FFMPEG_PATH = os.path.join(FFMPEG_DIR, "ffmpeg.exe")
+FFPROBE_PATH = os.path.join(FFMPEG_DIR, "ffprobe.exe")
+
 # Legacy locations retained for compatibility (do not remove without migration plan).
 LEGACY_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 LEGACY_LYRICS_DIR = os.path.join(BASE_DIR, "result")

@@ -6,7 +6,7 @@ import os
 import yt_dlp
 from youtubesearchpython import VideosSearch
 
-from app.config.paths import TEMP_DIR, ensure_data_dirs
+from app.config.paths import TEMP_DIR, ensure_data_dirs, FFMPEG_DIR
 
 def parse_duration(duration_str: str) -> Optional[int]:
     """YouTube 동영상 길이 문자열(HH:MM:SS)을 초 단위로 변환"""
@@ -135,6 +135,7 @@ def download_youtube_audio(url: str, output_filename: str) -> bool:
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
+            'ffmpeg_location': FFMPEG_DIR,
             'quiet': True,
             'no_warnings': True,
             'noprogress': True,

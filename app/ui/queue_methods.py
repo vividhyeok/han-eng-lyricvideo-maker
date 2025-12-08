@@ -10,7 +10,7 @@ def check_ready_to_add(self):
     has_youtube = self.selected_youtube_url
     has_lrc = self.selected_lrc_path and os.path.exists(self.selected_lrc_path)
     
-    self.add_queue_btn.setEnabled(has_genie and has_youtube and has_lrc)
+    self.add_queue_btn.setEnabled(bool(has_genie and has_youtube and has_lrc))
 
 
 def add_to_queue(self):

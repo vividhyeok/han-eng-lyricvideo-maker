@@ -251,6 +251,26 @@ class ModernMainWindow(QMainWindow):
         
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
+
+        # Manual YouTube URL Input
+        manual_input_frame = QFrame()
+        manual_input_layout = QHBoxLayout(manual_input_frame)
+        manual_input_layout.setContentsMargins(0, 10, 0, 0)
+        
+        manual_label = QLabel("🔗 Manual YouTube URL:")
+        manual_label.setObjectName("hint")
+        manual_input_layout.addWidget(manual_label)
+        
+        self.manual_youtube_input = QLineEdit()
+        self.manual_youtube_input.setPlaceholderText("Paste YouTube URL here if results are not satisfactory...")
+        manual_input_layout.addWidget(self.manual_youtube_input)
+        
+        manual_set_btn = QPushButton("Set URL")
+        manual_set_btn.setFixedWidth(80)
+        manual_set_btn.clicked.connect(self.on_manual_youtube_url_set)
+        manual_input_layout.addWidget(manual_set_btn)
+        
+        layout.addWidget(manual_input_frame)
         
         return center
     
@@ -398,11 +418,74 @@ class ModernMainWindow(QMainWindow):
         self.add_queue_btn.setEnabled(False)
         self.add_queue_btn.clicked.connect(self.add_to_queue)
         layout.addWidget(self.add_queue_btn)
-
-        layout.addStretch()
-        
-        return panel
-    
+
+        # Settings Section
+        settings_frame = QFrame()
+        settings_layout = QVBoxLayout(settings_frame)
+        settings_layout.setSpacing(10)
+        settings_layout.setContentsMargins(0, 20, 0, 0)
+
+        # Settings Title
+        settings_title = QLabel("⚙️ Settings")
+        settings_title.setObjectName("subtitle")
+        settings_layout.addWidget(settings_title)
+
+        # AI Model Selection
+        model_label = QLabel("AI Translation Model")
+        settings_layout.addWidget(model_label)
+        
+        self.model_combo = QComboBox()
+        from app.lyrics.ai_models import get_available_models
+        from app.config.config_manager import get_config
+        
+        available_models = get_available_models()
+        config = get_config()
+        current_model = config.get_translation_model()
+        
+        if not available_models:
+            self.model_combo.addItem("No models available")
+            self.model_combo.setEnabled(False)
+        else:
+            for model_id, model_name in available_models.items():
+                self.model_combo.addItem(model_name, model_id)
+            index = self.model_combo.findData(current_model)
+            if index >= 0:
+                self.model_combo.setCurrentIndex(index)
+        
+        self.model_combo.currentIndexChanged.connect(self.on_model_changed)
+        settings_layout.addWidget(self.model_combo)
+        
+        # Output Mode
+        output_label = QLabel("Output Mode")
+        settings_layout.addWidget(output_label)
+        
+        self.output_video_radio = QRadioButton("🎬 Video (.mp4)")
+        self.output_xml_radio = QRadioButton("📄 Premiere XML")
+        self.output_video_radio.setChecked(True)
+        self.output_video_radio.toggled.connect(lambda: self.set_output_mode("video"))
+        self.output_xml_radio.toggled.connect(lambda: self.set_output_mode("premiere_xml"))
+        settings_layout.addWidget(self.output_video_radio)
+        settings_layout.addWidget(self.output_xml_radio)
+        
+        # YouTube Upload
+        self.youtube_upload_checkbox = QCheckBox("📤 Auto-upload to YouTube")
+        self.youtube_upload_checkbox.stateChanged.connect(self.on_youtube_upload_toggled)
+        settings_layout.addWidget(self.youtube_upload_checkbox)
+
+        layout.addWidget(settings_frame)
+        layout.addStretch()
+        
+        return panel
+
+
+        layout.addStretch()
+
+        
+
+        return panel
+
+    
+
     def search_song(self):
         """Search for songs on Genie"""
         query = self.search_input.text().strip()
@@ -479,8 +562,8 @@ class ModernMainWindow(QMainWindow):
             card = self.create_result_card(result, idx, "youtube")
             self.results_layout.addWidget(card)
         
-        # If there is only one result (best match), auto-select it
-        if len(self.youtube_results) == 1:
+        # Auto-select the first result if available
+        if self.youtube_results:
             self.youtube_button_group.button(0).click()
 
     def create_result_card(self, result, idx, source):
@@ -612,6 +695,35 @@ class ModernMainWindow(QMainWindow):
         result = self.youtube_results[idx]
         self.selected_youtube_url = result.get('link', '')
         print(f"[DEBUG] 선택된 YouTube URL: {self.selected_youtube_url}")
+        
+        # Enable Add to Queue button
+        self.check_ready_to_add()
+
+    def on_manual_youtube_url_set(self):
+        """Handle manual YouTube URL input"""
+        url = self.manual_youtube_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Warning", "Please enter a YouTube URL")
+            return
+        
+        # Basic validation
+        if "youtube.com" not in url and "youtu.be" not in url:
+            QMessageBox.warning(self, "Warning", "Please enter a valid YouTube URL")
+            return
+
+        self.selected_youtube_url = url
+        print(f"[DEBUG] 수동 설정된 YouTube URL: {self.selected_youtube_url}")
+        
+        # Clear selection in radio buttons if any
+        if hasattr(self, 'youtube_button_group'):
+            button = self.youtube_button_group.checkedButton()
+            if button:
+                self.youtube_button_group.setExclusive(False)
+                button.setChecked(False)
+                self.youtube_button_group.setExclusive(True)
+
+        QMessageBox.information(self, "Success", "YouTube URL set successfully!")
+        self.check_ready_to_add()
 
     
     def update_album_art(self, url):
@@ -649,7 +761,8 @@ class ModernMainWindow(QMainWindow):
         """Enable/disable controls while processing"""
         self.is_processing = processing
         controls = [
-            self.generate_btn,
+            self.start_batch_btn,
+            self.add_queue_btn,
             self.search_input,
             self.model_combo,
             self.output_video_radio,
@@ -736,28 +849,33 @@ class ModernMainWindow(QMainWindow):
         self.worker = None
     
     def clean_temp_files(self):
-        """Clean temporary files"""
+        """Clean temporary files except lrc, mp3, jpg, and generated mp4"""
         import glob
         
         reply = QMessageBox.question(
             self, "확인", 
-            "임시 파일을 모두 삭제하시겠습니까?",
+            "임시 파일을 정리하시겠습니까?\n(lrc, mp3, jpg, mp4 파일은 유지됩니다)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                files = glob.glob(os.path.join(TEMP_DIR, "*"))
-                count = len(files)
-                for f in files:
+                deleted_count = 0
+                # Clean TEMP_DIR
+                temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
+                for f in temp_files:
                     try:
                         if os.path.isfile(f):
-                            os.remove(f)
+                            ext = os.path.splitext(f)[1].lower()
+                            # Keep mp3, jpg, lrc, mp4 in temp dir (if any)
+                            if ext not in ['.mp3', '.jpg', '.jpeg', '.lrc', '.mp4']:
+                                os.remove(f)
+                                deleted_count += 1
                     except Exception as e:
                         print(f"[WARN] Failed to delete {f}: {e}")
                 
-                self.append_progress_message(f"🗑️ Cleaned {count} temp files")
-                QMessageBox.information(self, "완료", f"{count}개의 임시 파일을 삭제했습니다.")
+                self.append_progress_message(f"🗑️ Cleaned {deleted_count} temp files")
+                QMessageBox.information(self, "완료", f"{deleted_count}개의 불필요한 임시 파일을 삭제했습니다.")
             except Exception as e:
                 QMessageBox.critical(self, "오류", f"파일 삭제 중 오류 발생:\n{e}")
 
