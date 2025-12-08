@@ -13,7 +13,7 @@ from app.config.paths import (
 )
 from app.export.premiere_exporter import export_premiere_xml
 from app.lyrics.openai_handler import parse_lrc_and_translate
-from app.media.video_maker import make_lyric_video
+from app.media.video_maker import make_lyric_video, get_audio_duration
 from app.sources.album_art_finder import download_album_art
 from app.sources.youtube_handler import download_youtube_audio
 
@@ -138,7 +138,11 @@ class ProcessManager:
                 print("[DEBUG] 가사 번역 시작")
                 os.environ['CURRENT_ARTIST'] = config.artist
                 os.environ['CURRENT_TITLE'] = config.title
-                lyrics_json_path = await parse_lrc_and_translate(lrc_path, json_path)
+                
+                # 오디오 길이 확인 (가사 배분을 위해)
+                duration = get_audio_duration(audio_path)
+                
+                lyrics_json_path = await parse_lrc_and_translate(lrc_path, json_path, duration=duration)
                 temp_files_to_cleanup.append(lyrics_json_path)
                 print(f"[DEBUG] 가사 번역 완료: {lyrics_json_path}")
             finally:

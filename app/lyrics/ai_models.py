@@ -245,6 +245,7 @@ class GeminiModel(TranslationModel):
             "5. When sentences span multiple lines: ensure translation flows naturally across lines.\n"
             "6. Do NOT include original Korean text in output. Output English ONLY.\n"
             "7. Maintain rhythm, emotion, and cultural context.\n"
+            "8. Ensure strict 1:1 mapping between input and output lines.\n"
             "Examples:\n"
             "- 'I'm on the 탑' → 'I'm on the top'\n"
             "- '나는 rapper야' → 'I'm a rapper'\n"

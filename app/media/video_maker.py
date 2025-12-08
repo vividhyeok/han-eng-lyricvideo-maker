@@ -1,12 +1,28 @@
 import os
 import json
 import traceback
+import subprocess
 import numpy as np
-from typing import List, Tuple, Optional, Sequence
+from typing import List, Tuple, Optional, Sequence, Dict
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from moviepy.editor import AudioFileClip, ImageClip, CompositeVideoClip, vfx
 
-from app.config.paths import TEMP_DIR, ensure_data_dirs
+from app.config.paths import TEMP_DIR, ensure_data_dirs, FFMPEG_PATH, FFPROBE_PATH
+
+def get_audio_duration(audio_path: str) -> float:
+    """ffprobe를 사용하여 오디오 파일의 길이를 초 단위로 반환"""
+    try:
+        cmd = [
+            FFPROBE_PATH,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            audio_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return float(result.stdout.strip())
+    except Exception as e:
+        print(f"[ERROR] 오디오 길이 확인 실패: {e}")
+        return 0.0
 
 def draw_outlined_text(draw: ImageDraw.ImageDraw, pos: Tuple[float, float], text: str, font: ImageFont.ImageFont,
                        text_color=(255, 255, 255), outline_color=(0, 0, 0), outline_width=3) -> None:
@@ -62,7 +78,11 @@ def _load_font(font_path: Optional[str], size: int) -> ImageFont.ImageFont:
 
 def prepare_fonts() -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
     font_path = resolve_font_path()
-    return _load_font(font_path, 72), _load_font(font_path, 48)
+    # Original lyrics font size (slightly smaller to accommodate album art)
+    font_main = _load_font(font_path, 60)
+    # English lyrics font size (similar to original)
+    font_sub = _load_font(font_path, 55)
+    return font_main, font_sub
 
 
 def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> float:
@@ -157,7 +177,22 @@ def prepare_base_frame(background_img: Image.Image) -> Image.Image:
     blurred = frame.filter(ImageFilter.GaussianBlur(radius=30))
     # Darker overlay for better contrast
     overlay = Image.new('RGBA', frame.size, (0, 0, 0, 160))
-    return Image.alpha_composite(blurred, overlay)
+    base = Image.alpha_composite(blurred, overlay)
+    
+    # Draw Album Art slightly above center
+    # Resize album art to be smaller (e.g., 500x500)
+    art_size = (500, 500)
+    art_img = background_img.resize(art_size, Image.Resampling.LANCZOS).convert('RGBA')
+    
+    # Calculate position (Center X, Slightly above Center Y)
+    # Frame center is (960, 540)
+    # Let's put the center of the album art at Y=400
+    art_x = (frame.width - art_size[0]) // 2
+    art_y = (frame.height // 2) - art_size[1] - 50 # Shift up
+    
+    base.paste(art_img, (art_x, art_y), art_img)
+    
+    return base
 
 
 def create_lyric_frame(base_frame: Image.Image, lyric: Dict[str, str], fonts: Tuple[ImageFont.ImageFont, ImageFont.ImageFont],
@@ -175,8 +210,21 @@ def create_lyric_frame(base_frame: Image.Image, lyric: Dict[str, str], fonts: Tu
     korean_lines = _wrap_text(draw, original_text, korean_font, max_text_width)
     english_lines = _wrap_text(draw, translated_text, english_font, max_text_width)
 
-    _draw_multiline_centered(draw, korean_lines, korean_font, frame.width, frame.height * 0.45)
-    _draw_multiline_centered(draw, english_lines, english_font, frame.width, frame.height * 0.72)
+    # Position lyrics below the album art
+    # Album art bottom is around Y=400 + 500/2 = 650? No.
+    # Art Y was (540 - 250 - 50) = 240. Bottom is 240 + 500 = 740.
+    # Let's adjust.
+    # Frame height 1080. Center 540.
+    # Album art size 500x500.
+    # If we want it slightly above center, let's say center of art is at Y=400.
+    # Top = 400 - 250 = 150. Bottom = 400 + 250 = 650.
+    
+    # Lyrics should start below 650.
+    # Let's put Korean lyrics center at Y=750
+    # English lyrics center at Y=850
+    
+    _draw_multiline_centered(draw, korean_lines, korean_font, frame.width, 750)
+    _draw_multiline_centered(draw, english_lines, english_font, frame.width, 880)
 
     return frame.convert('RGB')
 
@@ -204,23 +252,27 @@ def parse_srt_file(srt_path: str):
     return lyrics_data
 
 def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str, output_path: str):
-    """리릭 비디오 생성"""
+    """리릭 비디오 생성 (FFmpeg 직접 사용)"""
     try:
         print("[DEBUG] 리릭 비디오 생성 시작")
 
         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
         ensure_data_dirs()
         os.makedirs(TEMP_DIR, exist_ok=True)
-
-        audio = None
-        background_clip = None
-        final_clip = None
-        clips: List[ImageClip] = []
+        
+        # 임시 프레임 디렉토리 생성
+        frames_dir = os.path.join(TEMP_DIR, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
+        
+        # 기존 프레임 정리
+        for f in os.listdir(frames_dir):
+            os.remove(os.path.join(frames_dir, f))
 
         try:
-            # 오디오 로드
-            audio = AudioFileClip(audio_path)
-            duration = audio.duration
+            # 오디오 길이 확인
+            duration = get_audio_duration(audio_path)
+            if duration <= 0:
+                raise ValueError("오디오 길이를 확인할 수 없습니다.")
 
             # 앨범아트 로드 및 크기 조정
             with Image.open(album_art_path) as album_image:
@@ -238,60 +290,86 @@ def make_lyric_video(audio_path: str, album_art_path: str, lyrics_json_path: str
 
             lyrics_data.sort(key=lambda item: float(item.get('start_time', 0.0)))
 
-            # 각 가사에 대한 클립 생성
+            # FFmpeg concat demuxer용 리스트 작성
+            concat_list_path = os.path.join(TEMP_DIR, "concat_list.txt")
+            concat_entries = []
+            
+            current_time = 0.0
+            
+            # 기본 배경 이미지 저장
+            base_frame_path = os.path.join(frames_dir, "base_frame.png")
+            lyric_base_frame.save(base_frame_path)
+            
             for index, lyric in enumerate(lyrics_data):
-                frame = create_lyric_frame(lyric_base_frame, lyric, fonts)
-                frame_array = np.array(frame, dtype=np.uint8)
-
                 start_time = float(lyric.get('start_time', 0.0))
+                
+                # 가사 시작 전 공백 구간 처리
+                if start_time > current_time:
+                    gap_duration = start_time - current_time
+                    concat_entries.append(f"file '{base_frame_path.replace(os.sep, '/')}'")
+                    concat_entries.append(f"duration {gap_duration:.3f}")
+                    current_time = start_time
+                
+                # 다음 가사 시작 시간 또는 오디오 끝까지
                 if index < len(lyrics_data) - 1:
                     next_start = float(lyrics_data[index + 1].get('start_time', duration))
                 else:
                     next_start = duration
-
+                
+                # 최소 지속 시간 보장
                 next_start = max(next_start, start_time + 0.1)
-                clip_duration = max(0.1, next_start - start_time)
+                clip_duration = next_start - start_time
+                
+                # 가사 프레임 생성 및 저장
+                frame = create_lyric_frame(lyric_base_frame, lyric, fonts)
+                frame_path = os.path.join(frames_dir, f"frame_{index:04d}.png")
+                frame.save(frame_path)
+                
+                concat_entries.append(f"file '{frame_path.replace(os.sep, '/')}'")
+                concat_entries.append(f"duration {clip_duration:.3f}")
+                
+                current_time = next_start
 
-                # Manual fade-in effect (0.5s) using set_opacity
-                clip = ImageClip(frame_array).set_duration(clip_duration).set_start(start_time)
-                clip = clip.fx(vfx.fadein, 0.5)
-                clips.append(clip)
+            # 남은 시간 처리
+            if current_time < duration:
+                remaining_duration = duration - current_time
+                concat_entries.append(f"file '{base_frame_path.replace(os.sep, '/')}'")
+                concat_entries.append(f"duration {remaining_duration:.3f}")
+            
+            # 마지막 프레임 반복 (FFmpeg concat 버그 방지)
+            concat_entries.append(f"file '{base_frame_path.replace(os.sep, '/')}'")
 
-            # 배경 클립 생성
-            background_clip = ImageClip(np.array(background_img, dtype=np.uint8)).set_duration(duration)
+            # concat 리스트 파일 저장
+            with open(concat_list_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(concat_entries))
 
-            # 모든 클립 합성
-            final_clip = CompositeVideoClip([background_clip] + clips, size=(1920, 1080)).set_audio(audio)
-
-            temp_audiofile = os.path.join(TEMP_DIR, 'lyric-video-temp-audio.m4a')
-            threads = max(1, (os.cpu_count() or 4) // 2)
-
-            # 비디오 파일 생성
-            final_clip.write_videofile(
-                output_path,
-                fps=30,
-                codec='libx264',
-                audio_codec='aac',
-                audio_bitrate='192k',
-                bitrate='6000k',
-                preset='fast',
-                threads=threads,
-                ffmpeg_params=['-crf', '18', '-pix_fmt', 'yuv420p'],
-                temp_audiofile=temp_audiofile,
-                remove_temp=True,
-            )
+            # FFmpeg 명령 실행
+            cmd = [
+                FFMPEG_PATH,
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_list_path,
+                "-i", audio_path,
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-shortest",
+                "-preset", "fast",
+                "-crf", "18",
+                output_path
+            ]
+            
+            print(f"[DEBUG] FFmpeg 실행: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True)
 
             print(f"[DEBUG] 리릭 비디오 생성 완료: {output_path}")
 
         finally:
-            for clip in clips:
-                clip.close()
-            if background_clip is not None:
-                background_clip.close()
-            if final_clip is not None:
-                final_clip.close()
-            if audio is not None:
-                audio.close()
+            # 임시 파일 정리 (선택 사항, 디버깅 위해 남겨둘 수도 있음)
+            pass
 
     except Exception as e:
         print(f"[ERROR] 비디오 생성 실패: {str(e)}")

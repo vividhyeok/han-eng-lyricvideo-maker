@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from typing import List
 from xml.etree.ElementTree import Element, ElementTree, SubElement
 
-from moviepy.audio.io.AudioFileClip import AudioFileClip
+from app.config.paths import FFPROBE_PATH
+
+
+def _get_audio_duration(audio_path: str) -> float:
+    """FFprobe를 사용하여 오디오 파일의 길이를 초 단위로 반환합니다."""
+    try:
+        cmd = [
+            FFPROBE_PATH,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            audio_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(result.stdout.strip())
+    except Exception as e:
+        print(f"[ERROR] 오디오 길이 확인 실패: {e}")
+        return 0.0
 
 
 def _pathurl(path: str) -> str:
@@ -82,8 +100,7 @@ def export_premiere_xml(
 
     lyrics.sort(key=lambda item: float(item.get("start_time", 0.0)))
 
-    with AudioFileClip(audio_path) as audio:
-        total_duration = audio.duration
+    total_duration = _get_audio_duration(audio_path)
 
     total_frames = int(round(total_duration * fps))
     sequence_name = os.path.splitext(os.path.basename(audio_path))[0]

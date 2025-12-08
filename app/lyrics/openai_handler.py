@@ -260,7 +260,7 @@ def seconds_to_srt_timestamp(seconds):
     milliseconds = int((seconds - int(seconds)) * 1000)
     return f"{hours:02d}:{minutes:02d}:{sec:02d},{milliseconds:03d}"
 
-async def parse_lrc_and_translate(lrc_filepath: str, json_filepath: str) -> str:
+async def parse_lrc_and_translate(lrc_filepath: str, json_filepath: str, duration: float = 0.0) -> str:
     try:
         # LRC 파일 존재 확인
         if not os.path.exists(lrc_filepath):
@@ -273,9 +273,14 @@ async def parse_lrc_and_translate(lrc_filepath: str, json_filepath: str) -> str:
         first_lyric_time = None
         for line in lrc_content.split('\n'):
             if line.startswith('[') and ']' in line:
-                first_lyric_time = line[1:line.index(']')]
-                if first_lyric_time:
+                try:
+                    # 타임스탬프 형식 검증
+                    time_part = line[1:line.index(']')]
+                    convert_timestamp(time_part) # 테스트
+                    first_lyric_time = time_part
                     break
+                except:
+                    continue
         
         # 환경 변수에서 아티스트와 제목 가져오기
         artist = os.getenv('CURRENT_ARTIST', '아티스트')
@@ -310,6 +315,29 @@ async def parse_lrc_and_translate(lrc_filepath: str, json_filepath: str) -> str:
                 except Exception as e:
                     print(f"라인 처리 중 오류: {e}")
                     continue
+
+        # 타임스탬프가 없는 경우 (일반 텍스트 가사) 처리
+        if not lyrics_data and duration > 0:
+            print("[WARN] 타임스탬프를 찾을 수 없습니다. 가사를 오디오 길이에 맞춰 균등 배분합니다.")
+            lines = [line.strip() for line in lrc_content.split('\n') if line.strip()]
+            
+            # 제목/아티스트 정보 추가
+            lines.insert(0, f"{artist} - {title}")
+            
+            if lines:
+                # 시작 5초, 끝 5초 여유를 두고 배분
+                start_offset = 5.0
+                end_offset = 5.0
+                available_duration = max(duration - start_offset - end_offset, 10.0)
+                interval = available_duration / len(lines)
+                
+                for i, line in enumerate(lines):
+                    start_time = start_offset + (i * interval)
+                    lyrics_data.append({
+                        'start_time': start_time,
+                        'original': line
+                    })
+                    pending_texts.append(line)
 
         translations = await translate_lyrics(pending_texts) if pending_texts else []
 

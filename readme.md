@@ -26,7 +26,7 @@ PyQt6 기반의 GUI로 누구나 빠르게 고퀄리티 리릭 비디오를 제�
 
 ### 🎞️ 4. 리릭 비디오 생성 / 편집용 XML 출력
 
-* MoviePy + PIL로 **앨범 아트 + 타임라인 + 번역 가사** 합성
+* FFmpeg + PIL로 **앨범 아트 + 타임라인 + 번역 가사** 합성
 * **MP4 비디오** 또는 **Final Cut Pro XML(Premiere 호환)** 출력
 * YouTube 자동 업로드 옵션 지원(OAuth)
 
@@ -121,7 +121,7 @@ PyQt6 GUI가 실행되며, 필요한 폴더(`data/…`)가 자동 생성됩니�
 2. 앨범 아트 이미지 다운로드
 3. LRC 파일 파싱
 4. OpenAI 기반 문맥 번역
-5. MoviePy/PIL로 영상 합성
+5. FFmpeg/PIL로 영상 합성
 6. 결과물 저장 (`data/output`)
 
 모든 과정은 진행률 바 + 로그로 즉시 확인할 수 있습니다.
@@ -177,7 +177,7 @@ LyricVideoMaker/
 │  ├─ lyrics/
 │  │   └─ openai_handler.py       # 번역 + LRC 처리
 │  ├─ media/
-│  │   └─ video_maker.py          # MoviePy 기반 비디오 생성
+│  │   └─ video_maker.py          # FFmpeg 기반 비디오 생성
 │  ├─ export/
 │  │   └─ premiere_exporter.py    # XML(xmeml) 출력
 │  ├─ sources/

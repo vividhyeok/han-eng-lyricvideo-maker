@@ -2,6 +2,7 @@ from genieapi import GenieAPI
 from typing import List, Tuple, Optional
 import requests
 import traceback
+import os
 from bs4 import BeautifulSoup
 
 def search_genie_songs(query: str, limit: int = 4) -> List[Tuple[str, str, str, str, int]]:
@@ -58,6 +59,20 @@ def get_genie_lyrics(song_id: str) -> Optional[str]:
     try:
         genie = GenieAPI()
         lyrics = genie.get_lyrics(song_id)
+        
+        # GenieAPI가 파일 경로를 반환하는 경우 파일 내용을 읽어서 반환
+        if lyrics and isinstance(lyrics, str) and (os.path.exists(lyrics) or os.path.exists(os.path.join(os.getcwd(), lyrics))):
+            file_path = lyrics if os.path.exists(lyrics) else os.path.join(os.getcwd(), lyrics)
+            if os.path.isfile(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    print(f"[DEBUG] 가사 파일 읽기 성공: {file_path}")
+                    return content
+                except Exception as read_err:
+                    print(f"[WARN] 가사 파일 읽기 실패: {read_err}")
+                    # 읽기 실패 시 경로 반환 (기존 동작 유지) 또는 None
+        
         print(f"[DEBUG] 가사 가져오기 성공: {song_id}")
         return lyrics
     except Exception as e:
