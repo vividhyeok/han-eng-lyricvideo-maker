@@ -116,7 +116,7 @@ def youtube_search(query: str, target_duration: Optional[int] = None) -> List[Di
         print(f"YouTube 검색 실패: {e}")
         return []
 
-def download_youtube_audio(url: str, output_filename: str) -> bool:
+def download_youtube_audio(url: str, output_filename: str) -> Optional[str]:
     """YouTube 동영상의 오디오를 MP3로 바로 다운로드"""
     try:
         # output_filename = os.path.splitext(output_filename)[0]  # 파일명에 점(.)이 포함된 경우 확장자로 오인하여 잘리는 문제 수정
@@ -150,10 +150,10 @@ def download_youtube_audio(url: str, output_filename: str) -> bool:
             output_path = base_path + '.mp3'
             if os.path.exists(output_path):
                 print(f"[DEBUG] MP3 다운로드 완료: {output_path}")
-                return True
+                return output_path
                 
-        return False
+        return None
 
     except Exception as e:
         print(f"[ERROR] MP3 다운로드 실패: {str(e)}")
-        return False
+        return None

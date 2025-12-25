@@ -30,6 +30,7 @@ class ProcessConfig:
     target_dir: str = TEMP_DIR
     output_dir: str = OUTPUT_DIR
     lrc_path: Optional[str] = None
+    prefer_youtube: bool = False
 
 class ProcessManager:
     def __init__(self, update_progress: Callable[[str, int], None]):
@@ -63,27 +64,37 @@ class ProcessManager:
             
             # 오디오 다운로드 (spotDL 우선, 실패 시 YouTube 폴백)
             self.update_progress("고품질 오디오 다운로드 중...", 20)
-            print(f"[DEBUG] spotDL 다운로드 시도: {config.artist} - {config.title}")
-            
-            from app.sources.spotdl_handler import download_audio_simple
             
             audio_downloaded = False
-            spotdl_result = download_audio_simple(config.artist, config.title, TEMP_DIR)
             
-            if spotdl_result and os.path.exists(spotdl_result):
-                print(f"[DEBUG] spotDL 다운로드 성공: {spotdl_result}")
-                # spotDL이 생성한 파일을 원하는 경로로 이동/복사
-                if spotdl_result != audio_path:
-                    import shutil
-                    shutil.move(spotdl_result, audio_path)
+            # Check if audio already exists (e.g. from manual sync)
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                print(f"[DEBUG] 기존 오디오 파일 사용: {audio_path}")
                 audio_downloaded = True
             else:
-                print("[WARN] spotDL 다운로드 실패, YouTube 다운로드로 폴백")
-                self.update_progress("YouTube 오디오 다운로드 중...", 25)
-                print(f"[DEBUG] YouTube 다운로드 시작: {config.youtube_url}")
-                if download_youtube_audio(config.youtube_url, filename):
-                    audio_downloaded = True
-                    print(f"[DEBUG] YouTube 다운로드 완료")
+                # Try spotDL unless prefer_youtube is True
+                spotdl_success = False
+                if not config.prefer_youtube:
+                    print(f"[DEBUG] spotDL 다운로드 시도: {config.artist} - {config.title}")
+                    from app.sources.spotdl_handler import download_audio_simple
+                    spotdl_result = download_audio_simple(config.artist, config.title, TEMP_DIR)
+                    
+                    if spotdl_result and os.path.exists(spotdl_result):
+                        print(f"[DEBUG] spotDL 다운로드 성공: {spotdl_result}")
+                        # spotDL이 생성한 파일을 원하는 경로로 이동/복사
+                        if spotdl_result != audio_path:
+                            import shutil
+                            shutil.move(spotdl_result, audio_path)
+                        spotdl_success = True
+                        audio_downloaded = True
+                
+                if not spotdl_success:
+                    print("[WARN] spotDL 다운로드 건너뜀/실패, YouTube 다운로드로 폴백")
+                    self.update_progress("YouTube 오디오 다운로드 중...", 25)
+                    print(f"[DEBUG] YouTube 다운로드 시작: {config.youtube_url}")
+                    if download_youtube_audio(config.youtube_url, filename):
+                        audio_downloaded = True
+                        print(f"[DEBUG] YouTube 다운로드 완료")
             
             if audio_downloaded:
                 temp_files_to_cleanup.append(audio_path)

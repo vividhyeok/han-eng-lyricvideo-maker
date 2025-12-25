@@ -2,7 +2,7 @@ import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QListWidget, QPushButton, QSlider, QMessageBox, QListWidgetItem,
-    QTextEdit, QStackedWidget, QWidget
+    QTextEdit, QStackedWidget, QWidget, QInputDialog
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import Qt, QUrl, QTime, QTimer
@@ -66,15 +66,36 @@ class LyricSyncDialog(QDialog):
         # Controls
         controls_layout = QHBoxLayout()
         
+        self.seek_back_btn = QPushButton("⏪ -5s")
+        self.seek_back_btn.clicked.connect(lambda: self.seek_relative(-5000))
+        controls_layout.addWidget(self.seek_back_btn)
+
         self.play_btn = QPushButton("▶ Play (Enter)")
         self.play_btn.clicked.connect(self.toggle_playback)
         controls_layout.addWidget(self.play_btn)
         
+        self.seek_fwd_btn = QPushButton("⏩ +5s")
+        self.seek_fwd_btn.clicked.connect(lambda: self.seek_relative(5000))
+        controls_layout.addWidget(self.seek_fwd_btn)
+
         self.time_label = QLabel("00:00.00")
         self.time_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         controls_layout.addWidget(self.time_label)
         
         sync_layout.addLayout(controls_layout)
+
+        # Edit Controls
+        edit_controls_layout = QHBoxLayout()
+        
+        self.edit_ts_btn = QPushButton("✏️ Edit Time")
+        self.edit_ts_btn.clicked.connect(self.edit_timestamp)
+        edit_controls_layout.addWidget(self.edit_ts_btn)
+
+        self.delete_ts_btn = QPushButton("❌ Clear Time (Del)")
+        self.delete_ts_btn.clicked.connect(self.clear_timestamp)
+        edit_controls_layout.addWidget(self.delete_ts_btn)
+
+        sync_layout.addLayout(edit_controls_layout)
         
         # Save Button
         self.save_btn = QPushButton("💾 Save LRC")
@@ -203,6 +224,25 @@ class LyricSyncDialog(QDialog):
         
         # Ensure focus stays on list for keyboard nav
         self.list_widget.setFocus()
+
+    def edit_timestamp(self):
+        """Manually edit timestamp for the current line"""
+        if self.current_line_index >= len(self.raw_lyrics):
+            return
+
+        current_ts = self.timestamps[self.current_line_index] or "00:00.00"
+        text, ok = QInputDialog.getText(self, "Edit Timestamp", "Enter timestamp (MM:SS.mm):", text=current_ts)
+        
+        if ok and text:
+            # Validate format (simple check)
+            try:
+                # Update UI and data
+                item = self.list_widget.item(self.current_line_index)
+                original_text = self.raw_lyrics[self.current_line_index]
+                item.setText(f"[{text}] {original_text}")
+                self.timestamps[self.current_line_index] = text
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Invalid format: {e}")
 
     def clear_timestamp(self):
         """Clear timestamp for the current line"""

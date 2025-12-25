@@ -231,9 +231,21 @@ def clean_translation(text: str) -> str:
     text = re.sub(r'translates to|in English:', '', text)
     # 불필요한 따옴표와 마침표 제거
     text = re.sub(r'^["\']+|["\']+$|\\"|\.+$', '', text)
-    # 한글이 그대로 있는 경우 처리
+    
+    # 한글이 포함된 경우
     if re.search(r'[가-힣]', text):
-        return "Translation error"
+        # 괄호 안에 있는 한글 제거 시도 (예: "Hello (안녕)")
+        text = re.sub(r'\([가-힣\s]+\)', '', text)
+        # 한글 문자만 제거
+        cleaned = re.sub(r'[가-힣]+', '', text).strip()
+        
+        # 한글 제거 후에도 유의미한 텍스트(영어/숫자)가 남아있으면 반환
+        if any(c.isalnum() for c in cleaned):
+            return cleaned
+            
+        # 한글만 있는 경우 (번역 실패)
+        return "Translation Error"
+        
     return text.strip()
 
 def convert_timestamp(timestamp: str) -> float:

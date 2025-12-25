@@ -16,9 +16,11 @@ from datetime import datetime
 from app.config.paths import LYRICS_DIR, TEMP_DIR, ensure_data_dirs
 from app.pipeline.process_manager import ProcessConfig, ProcessManager
 from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
-from app.sources.youtube_handler import youtube_search
+from app.sources.youtube_handler import youtube_search, download_youtube_audio
 from app.ui.components import YouTubeUploadDialog, load_image_from_url
 from app.ui.styles import MODERN_STYLESHEET
+from app.ui.lyric_sync_dialog import LyricSyncDialog
+from app.ui.manual_entry_dialog import ManualEntryDialog
 
 
 def sanitize_filename(filename):
@@ -44,7 +46,8 @@ class WorkerThread(QThread):
                 album_art_url=self.main_window.album_cover_input.text(),
                 youtube_url=self.main_window.selected_youtube_url,
                 output_mode=self.main_window.output_mode,
-                lrc_path=self.main_window.selected_lrc_path
+                lrc_path=self.main_window.selected_lrc_path,
+                prefer_youtube=getattr(self.main_window, 'prefer_youtube', False)
             )
 
             validation_error = self.process_manager.validate_config(config)
@@ -97,6 +100,8 @@ class ModernMainWindow(QMainWindow):
         self.last_progress_message = None
         self.queue_items = []  # Queue for batch processing
         self.current_queue_index = 0
+        self.is_manual_mode = False
+        self.manual_data = None
         
         # Create UI
         self.init_ui()
@@ -161,6 +166,13 @@ class ModernMainWindow(QMainWindow):
         search_btn.setMinimumHeight(40)  # Increased from 35 to 40
         search_btn.clicked.connect(self.search_song)
         layout.addWidget(search_btn)
+
+        # Manual Entry Button
+        manual_btn = QPushButton("Create Manually")
+        manual_btn.setFixedWidth(140)
+        manual_btn.setMinimumHeight(40)
+        manual_btn.clicked.connect(lambda: self.start_manual_entry())
+        layout.addWidget(manual_btn)
         
         return top_bar
     
@@ -419,6 +431,14 @@ class ModernMainWindow(QMainWindow):
         self.add_queue_btn.clicked.connect(self.add_to_queue)
         layout.addWidget(self.add_queue_btn)
 
+        # Start Sync Button
+        self.start_sync_btn = QPushButton("🎵 Start Lyric Sync")
+        self.start_sync_btn.setMinimumHeight(40)
+        self.start_sync_btn.setEnabled(False)
+        self.start_sync_btn.clicked.connect(self.start_manual_sync)
+        self.start_sync_btn.setStyleSheet("background-color: #2c3e50; color: white; border: 1px solid #34495e;")
+        layout.addWidget(self.start_sync_btn)
+
         # Settings Section
         settings_frame = QFrame()
         settings_layout = QVBoxLayout(settings_frame)
@@ -486,6 +506,142 @@ class ModernMainWindow(QMainWindow):
 
     
 
+    def start_manual_entry(self, initial_data=None):
+        dialog = ManualEntryDialog(self)
+        if initial_data:
+            dialog.title_input.setText(initial_data.get("title", ""))
+            dialog.artist_input.setText(initial_data.get("artist", ""))
+            dialog.art_input.setText(initial_data.get("album_art", ""))
+        
+        if dialog.exec():
+            self.manual_data = dialog.get_data()
+            self.is_manual_mode = True
+            
+            # Update UI with manual data
+            self.title_input.setText(self.manual_data["title"])
+            self.artist_input.setText(self.manual_data["artist"])
+            self.album_cover_input.setText(self.manual_data["album_art"])
+            
+            # Handle YouTube URL if provided
+            youtube_url = self.manual_data.get("youtube_url", "").strip()
+            if youtube_url:
+                self.selected_youtube_url = youtube_url
+                print(f"[DEBUG] Manual YouTube URL: {self.selected_youtube_url}")
+                self.check_ready_to_add()
+                
+                # Ask to start sync immediately
+                reply = QMessageBox.question(
+                    self, "Start Sync", 
+                    "YouTube URL provided. Start syncing lyrics now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.start_manual_sync()
+                    return
+
+            # Search YouTube to show alternatives or if URL was not provided
+            query = f"{self.manual_data['artist']} {self.manual_data['title']}"
+            try:
+                self.youtube_results = youtube_search(query)
+                self.display_youtube_results()
+                if not youtube_url:
+                    QMessageBox.information(self, "Select Audio", "Please select a YouTube video to use as the audio source.")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"YouTube search failed: {e}")
+
+    def start_manual_sync(self):
+        if not self.selected_youtube_url:
+            QMessageBox.warning(self, "Warning", "Please select a YouTube video first.")
+            return
+
+        # If manual data is missing (e.g. normal flow but want to sync manually),
+        # try to use current UI inputs
+        lyrics_text = ""
+        if self.manual_data and "lyrics" in self.manual_data:
+            lyrics_text = self.manual_data["lyrics"]
+        else:
+            # Try to read from existing LRC if available?
+            if self.selected_lrc_path and os.path.exists(self.selected_lrc_path):
+                try:
+                    with open(self.selected_lrc_path, 'r', encoding='utf-8') as f:
+                        # Strip timestamps for editing
+                        content = f.read()
+                        # Simple regex to remove timestamps [mm:ss.xx]
+                        lyrics_text = re.sub(r'\[\d{2}:\d{2}\.\d{2,3}\]', '', content)
+                except:
+                    pass
+            
+            if not lyrics_text:
+                # Ask user for lyrics
+                dialog = ManualEntryDialog(self)
+                # Pre-fill title/artist
+                dialog.title_input.setText(self.title_input.text())
+                dialog.artist_input.setText(self.artist_input.text())
+                dialog.art_input.setText(self.album_cover_input.text())
+                if self.selected_youtube_url:
+                    dialog.youtube_input.setText(self.selected_youtube_url)
+                
+                if dialog.exec():
+                    data = dialog.get_data()
+                    lyrics_text = data["lyrics"]
+                    # Update other fields if changed
+                    self.title_input.setText(data["title"])
+                    self.artist_input.setText(data["artist"])
+                    self.album_cover_input.setText(data["album_art"])
+                    
+                    if data.get("youtube_url"):
+                        self.selected_youtube_url = data["youtube_url"]
+                        self.check_ready_to_add()
+                else:
+                    return
+
+        # Download audio
+        self.progress_log.append("Downloading audio for sync...")
+        QApplication.processEvents()
+        
+        artist = self.artist_input.text().strip() or "Unknown"
+        title = self.title_input.text().strip() or "Unknown"
+        filename = sanitize_filename(f"{artist} - {title}")
+        
+        try:
+            audio_path = download_youtube_audio(self.selected_youtube_url, filename)
+            
+            if not audio_path or not os.path.exists(audio_path):
+                QMessageBox.warning(self, "Error", "Failed to download audio.")
+                return
+
+            # Open Sync Dialog
+            sync_dialog = LyricSyncDialog(audio_path, lyrics_text, self)
+            if sync_dialog.exec():
+                lrc_content = sync_dialog.get_lrc_content()
+                if lrc_content:
+                    # Save LRC
+                    ensure_data_dirs()
+                    lrc_path = os.path.join(LYRICS_DIR, f"{filename}.lrc")
+                    with open(lrc_path, "w", encoding="utf-8") as f:
+                        f.write(lrc_content)
+                    
+                    self.selected_lrc_path = lrc_path
+                    self.progress_log.append(f"LRC saved to {lrc_path}")
+                    
+                    # Set flag to prefer YouTube audio since we synced to it
+                    self.prefer_youtube = True
+                    
+                    # Enable Add to Queue button
+                    self.check_ready_to_add()
+                    
+                    # Auto-add to queue if possible
+                    if self.add_queue_btn.isEnabled():
+                        self.add_to_queue(silent=True)
+                        QMessageBox.information(self, "Success", "Lyrics synced, saved, and added to queue!")
+                    else:
+                        QMessageBox.information(self, "Success", "Lyrics synced and saved! Please fill in missing info to add to queue.")
+                        
+                    self.is_manual_mode = False # Reset mode
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Sync process failed: {e}")
+            traceback.print_exc()
+
     def search_song(self):
         """Search for songs on Genie"""
         query = self.search_input.text().strip()
@@ -499,9 +655,20 @@ class ModernMainWindow(QMainWindow):
         # Search Genie
         try:
             self.genie_results = search_genie_songs(query)
+            if not self.genie_results:
+                reply = QMessageBox.question(
+                    self, "No Results", 
+                    "No songs found on Genie. Do you want to enter details manually?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.start_manual_entry()
+                return
+
             self.display_genie_results()
         except Exception as e:
             print(f"[ERROR] Genie search failed: {e}")
+            QMessageBox.warning(self, "Search Error", f"Genie search failed: {e}")
     
     def clear_results(self):
         """Clear search results"""
@@ -562,9 +729,9 @@ class ModernMainWindow(QMainWindow):
             card = self.create_result_card(result, idx, "youtube")
             self.results_layout.addWidget(card)
         
-        # Auto-select the first result if available
-        if self.youtube_results:
-            self.youtube_button_group.button(0).click()
+        # Auto-select removed to allow manual selection
+        # if self.youtube_results:
+        #     self.youtube_button_group.button(0).click()
 
     def create_result_card(self, result, idx, source):
         """Create a modern result card"""
@@ -681,6 +848,19 @@ class ModernMainWindow(QMainWindow):
                     print(f"[DEBUG] LRC 파일 저장: {lrc_path}")
                 else:
                     print("[WARN] 가사 데이터를 가져오지 못했습니다.")
+                    reply = QMessageBox.question(
+                        self, "Lyrics Missing", 
+                        "Lyrics not found. Do you want to create them manually?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.Yes:
+                        # Pre-fill manual entry with Genie data
+                        self.start_manual_entry(initial_data={
+                            "title": title,
+                            "artist": artist,
+                            "album_art": album_art_url
+                        })
+                        return
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to download lyrics: {e}")
         
@@ -695,6 +875,15 @@ class ModernMainWindow(QMainWindow):
         result = self.youtube_results[idx]
         self.selected_youtube_url = result.get('link', '')
         print(f"[DEBUG] 선택된 YouTube URL: {self.selected_youtube_url}")
+        
+        # if self.is_manual_mode:
+        #     reply = QMessageBox.question(
+        #         self, "Start Sync", 
+        #         "Selected audio source. Start syncing lyrics now?",
+        #         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        #     )
+        #     if reply == QMessageBox.StandardButton.Yes:
+        #         self.start_manual_sync()
         
         # Enable Add to Queue button
         self.check_ready_to_add()
@@ -726,6 +915,134 @@ class ModernMainWindow(QMainWindow):
         self.check_ready_to_add()
 
     
+    def check_ready_to_add(self):
+        """Check if all required info is present to add to queue"""
+        title = self.title_input.text().strip()
+        artist = self.artist_input.text().strip()
+        
+        # Basic requirements
+        has_info = bool(title and artist)
+        has_youtube = bool(self.selected_youtube_url)
+        
+        # Enable Sync Button if we have YouTube URL
+        if hasattr(self, 'start_sync_btn'):
+            self.start_sync_btn.setEnabled(has_youtube)
+            if self.is_manual_mode:
+                self.start_sync_btn.setText("🎵 Start Lyric Sync (Manual Mode)")
+            else:
+                self.start_sync_btn.setText("🎵 Start Lyric Sync")
+
+        # For Add to Queue, we need LRC path OR we need to be in a state where we can generate it?
+        # Actually, Add to Queue requires LRC path usually.
+        # But if we are in manual mode, we might not have LRC yet until we sync.
+        has_lrc = bool(self.selected_lrc_path and os.path.exists(self.selected_lrc_path))
+        
+        self.add_queue_btn.setEnabled(has_info and has_youtube and has_lrc)
+
+    def add_to_queue(self, silent=False):
+        """Add current configuration to queue"""
+        title = self.title_input.text().strip()
+        artist = self.artist_input.text().strip()
+        album_art = self.album_cover_input.text().strip()
+        
+        if not title or not artist or not self.selected_youtube_url:
+            return
+            
+        # If manual sync was done, we prefer YouTube audio
+        prefer_youtube = getattr(self, 'prefer_youtube', False)
+        
+        item_data = {
+            "title": title,
+            "artist": artist,
+            "album_art_url": album_art,
+            "youtube_url": self.selected_youtube_url,
+            "lrc_path": self.selected_lrc_path,
+            "output_mode": self.output_mode,
+            "status": "Pending",
+            "prefer_youtube": prefer_youtube
+        }
+        
+        self.queue_items.append(item_data)
+        
+        # Add to UI list
+        list_item = f"{artist} - {title} [{self.output_mode}]"
+        self.queue_list.addItem(list_item)
+        
+        # Reset selection (optional)
+        # self.clear_selection()
+        
+        # Enable Start Batch
+        self.start_batch_btn.setEnabled(True)
+        
+        if not silent:
+            QMessageBox.information(self, "Added", "Song added to queue!")
+
+    def start_batch_processing(self):
+        """Start processing the queue"""
+        if not self.queue_items:
+            return
+            
+        self.current_queue_index = 0
+        self.set_processing_state(True)
+        self.process_next_item()
+
+    def process_next_item(self):
+        if self.current_queue_index >= len(self.queue_items):
+            self.set_processing_state(False)
+            QMessageBox.information(self, "Done", "Batch processing completed!")
+            self.queue_items = []
+            self.queue_list.clear()
+            return
+            
+        item = self.queue_items[self.current_queue_index]
+        
+        # Update UI to show what's processing
+        self.queue_list.setCurrentRow(self.current_queue_index)
+        
+        # Setup worker
+        self.worker = WorkerThread(self)
+        # We need to pass the specific item config to the worker
+        # But WorkerThread currently reads from UI inputs.
+        # We should modify WorkerThread to accept config or modify UI inputs.
+        # For simplicity, let's update UI inputs to match current item (visual feedback)
+        self.title_input.setText(item['title'])
+        self.artist_input.setText(item['artist'])
+        self.album_cover_input.setText(item['album_art_url'])
+        self.selected_youtube_url = item['youtube_url']
+        self.selected_lrc_path = item['lrc_path']
+        self.output_mode = item['output_mode']
+        self.prefer_youtube = item.get('prefer_youtube', False) # Store for WorkerThread to read
+        
+        self.worker.finished.connect(self.on_process_finished)
+        self.worker.error.connect(self.on_process_error)
+        self.worker.progress.connect(self.update_progress_bar)
+        self.worker.upload_requested.connect(self.handle_upload_request)
+        
+        self.worker.start()
+
+    def on_process_finished(self):
+        self.progress_log.append(f"Completed: {self.queue_items[self.current_queue_index]['title']}")
+        self.current_queue_index += 1
+        self.process_next_item()
+
+    def on_process_error(self, error_msg):
+        self.progress_log.append(f"Error: {error_msg}")
+        # Continue to next item? Or stop?
+        # Let's continue
+        self.current_queue_index += 1
+        self.process_next_item()
+
+    def update_progress_bar(self, message, value):
+        if self.progress_bar:
+            self.progress_bar.setValue(value)
+        self.append_progress_message(message)
+
+    def handle_upload_request(self, video_path, title, artist):
+        # ... (existing upload logic)
+        # For batch, maybe we should auto-upload or skip dialog?
+        # For now, let's just finish
+        self.worker.finished.emit()
+
     def update_album_art(self, url):
         """Update album art preview"""
         if not url:

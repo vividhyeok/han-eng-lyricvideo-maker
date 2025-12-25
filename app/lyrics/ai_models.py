@@ -143,10 +143,12 @@ class DeepSeekModel(TranslationModel):
         try:
             from openai import AsyncOpenAI  # DeepSeek uses OpenAI-compatible API
             api_key = os.getenv("DEEPSEEK_API_KEY")
+            base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            
             if api_key:
                 self.client = AsyncOpenAI(
                     api_key=api_key,
-                    base_url="https://api.deepseek.com"
+                    base_url=base_url
                 )
         except ImportError:
             pass
@@ -245,7 +247,7 @@ class DeepSeekModel(TranslationModel):
 class GeminiModel(TranslationModel):
     """Google Gemini models"""
     
-    def __init__(self, model_name: str = "gemini-pro"):
+    def __init__(self, model_name: str = "gemini-2.0-flash"):
         self.model_name = model_name
         self.client = None
         
@@ -349,8 +351,10 @@ AVAILABLE_MODELS = {
     "gpt-4o": ("OpenAI GPT-4o", lambda: OpenAIModel("gpt-4o")),
     "gpt-4-turbo": ("OpenAI GPT-4 Turbo", lambda: OpenAIModel("gpt-4-turbo")),
     "deepseek-chat": ("DeepSeek Chat", lambda: DeepSeekModel("deepseek-chat")),
-    "gemini-pro": ("Google Gemini Pro", lambda: GeminiModel("gemini-pro")),
+    "gemini-2.0-flash": ("Google Gemini 2.0 Flash", lambda: GeminiModel("gemini-2.0-flash")),
+    "gemini-2.0-flash-lite": ("Google Gemini 2.0 Flash Lite", lambda: GeminiModel("gemini-2.0-flash-lite")),
     "gemini-1.5-pro": ("Google Gemini 1.5 Pro", lambda: GeminiModel("gemini-1.5-pro")),
+    "gemini-pro": ("Google Gemini Pro (Legacy)", lambda: GeminiModel("gemini-2.0-flash")), # Fallback alias
 }
 
 
