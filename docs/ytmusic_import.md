@@ -1,6 +1,24 @@
 # YouTube Music JSON Import
 
-This document explains how to import YouTube Music playlists/albums/queues that were exported via a Chrome extension.
+This document explains how to import YouTube Music playlists/albums/queues that were exported via the included Chrome extension.
+
+## Chrome Extension
+
+The `chrome-extension/` folder contains a Manifest V3 extension that allows you to:
+1. Scrape the "Now Playing" queue from `music.youtube.com`.
+2. Manage a list of tracks to export.
+3. Copy the JSON payload to clipboard or save it.
+
+### Installation
+1. Open Chrome and go to `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select the `chrome-extension` folder in this repository.
+
+### Usage
+1. Navigate to YouTube Music and play a song/queue.
+2. Click the extension icon.
+3. Click **Import Queue from Tab**.
+4. Click **Copy JSON to Clipboard**.
 
 ## Export JSON schema
 
@@ -8,21 +26,21 @@ This document explains how to import YouTube Music playlists/albums/queues that 
 * `type`: `"playlist" | "album" | "queue"` (string)
 * `name`: name of the collection
 * `source`: `"ytmusic"` (required)
-* `exportedAt`: ISO8601 timestamp string
+* `exported_at`: ISO8601 timestamp string
 * `items`: array of track objects with:
-  * `videoId` (required)
+  * `video_id` (required, snake_case preferred, camelCase `videoId` also supported)
   * `title` (required)
   * `artist` (required)
   * `album` (optional)
-  * `durationMs` (optional)
-  * `thumbnails` (optional array) — first entry’s `url`/`src` is used as album art
+  * `duration_ms` (optional)
+  * `thumbnail_url` (optional)
 
-See `ytmusic_export.sample.json` for a concrete example.
+See `ytmusic_queue_export.sample.json` for a concrete example.
 
 ## Importing via UI
 
 1. Open the app and click **Import YT Music JSON** in the top bar.
-2. Pick the exported JSON file.
+2. Choose **Load from File** or **Paste from Clipboard**.
 3. A preview dialog shows the track list; sort if needed, then click **Enqueue All**.
 4. Tracks are added to the queue with YouTube Music audio (video ID based) and will process like normal jobs.
 
@@ -32,7 +50,7 @@ See `ytmusic_export.sample.json` for a concrete example.
 
 ```json
 [
-  { "type": "ytmusic_export", "path": "ytmusic_export.sample.json" }
+  { "type": "ytmusic_export", "path": "ytmusic_queue_export.sample.json" }
 ]
 ```
 

@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "YT Music Queue Exporter",
+  "version": "1.0",
+  "description": "Export current YouTube Music queue to JSON for Lyric Video Maker",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel"
+  ],
+  "action": {
+    "default_title": "Open Side Panel"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["content.js"]
+    }
+  ]
+}

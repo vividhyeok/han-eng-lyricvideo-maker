@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source": "ytmusic",
+  "type": "queue",
+  "name": "Now Playing Queue",
+  "exported_at": "2025-01-06T12:00:00.000Z",
+  "items": [
+    {
+      "video_id": "dQw4w9WgXcQ",
+      "title": "Never Gonna Give You Up",
+      "artist": "Rick Astley",
+      "album": "Whenever You Need Somebody",
+      "duration_ms": 213000,
+      "thumbnail_url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/sddefault.jpg"
+    },
+    {
+      "video_id": "9bZkp7q19f0",
+      "title": "Gangnam Style",
+      "artist": "PSY",
+      "album": "Psy 6 (Six Rules), Part 1",
+      "duration_ms": 219000,
+      "thumbnail_url": "https://i.ytimg.com/vi/9bZkp7q19f0/sddefault.jpg"
+    }
+  ]
+}

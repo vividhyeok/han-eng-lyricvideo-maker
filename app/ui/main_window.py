@@ -19,7 +19,8 @@ from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, 
 from app.sources.youtube_handler import youtube_search, download_youtube_audio
 from app.sources.youtube_utils import extract_video_id, build_youtube_music_url
 from app.sources.ytmusic_audio_handler import get_or_download_audio
-from app.sources.ytmusic_export_handler import TrackItem, load_ytmusic_export
+from app.sources.ytmusic_export_handler import TrackItem, load_ytmusic_export, parse_ytmusic_export_data
+import json
 from app.lyrics.lrc_resolver import resolve_lrc, save_manual_lrc
 from app.ui.components import YouTubeUploadDialog, load_image_from_url
 from app.ui.styles import MODERN_STYLESHEET
@@ -580,16 +581,51 @@ class ModernMainWindow(QMainWindow):
 
     def import_ytmusic_json(self):
         """Import a YouTube Music export JSON and enqueue tracks."""
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import YouTube Music Export", "", "JSON Files (*.json)"
-        )
-        if not path:
+        # Ask user for source: File or Clipboard
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Import YouTube Music Queue")
+        msg_box.setText("Select import source:")
+        file_btn = msg_box.addButton("Load from File", QMessageBox.ButtonRole.ActionRole)
+        clip_btn = msg_box.addButton("Paste from Clipboard", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg_box.addButton(QMessageBox.StandardButton.Cancel)
+        
+        msg_box.exec()
+        
+        clicked = msg_box.clickedButton()
+        tracks = []
+
+        if clicked == file_btn:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Import YouTube Music Export", "", "JSON Files (*.json)"
+            )
+            if not path:
+                return
+            try:
+                tracks = load_ytmusic_export(path)
+            except Exception as exc:
+                QMessageBox.critical(self, "Import Failed", f"Failed to read export file:\n{exc}")
+                return
+
+        elif clicked == clip_btn:
+            clipboard = QApplication.clipboard()
+            text = clipboard.text()
+            if not text:
+                QMessageBox.warning(self, "Empty Clipboard", "Clipboard is empty.")
+                return
+            try:
+                data = json.loads(text)
+                tracks = parse_ytmusic_export_data(data)
+            except json.JSONDecodeError:
+                QMessageBox.critical(self, "Import Failed", "Clipboard content is not valid JSON.")
+                return
+            except Exception as exc:
+                QMessageBox.critical(self, "Import Failed", f"Failed to parse export data:\n{exc}")
+                return
+        else:
             return
 
-        try:
-            tracks = load_ytmusic_export(path)
-        except Exception as exc:
-            QMessageBox.critical(self, "Import Failed", f"Failed to read export:\n{exc}")
+        if not tracks:
+            QMessageBox.information(self, "No Tracks", "No valid tracks found in import.")
             return
 
         preview = YTMusicImportDialog(tracks, self)
