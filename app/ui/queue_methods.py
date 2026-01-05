@@ -6,37 +6,37 @@ from PyQt6.QtWidgets import QMessageBox
 
 def check_ready_to_add(self):
     """Check if ready to add to queue"""
-    has_genie = hasattr(self, 'selected_genie_id') and self.selected_genie_id
-    has_youtube = self.selected_youtube_url
-    has_lrc = self.selected_lrc_path and os.path.exists(self.selected_lrc_path)
-    
-    self.add_queue_btn.setEnabled(bool(has_genie and has_youtube and has_lrc))
+    title = self.title_input.text().strip()
+    artist = self.artist_input.text().strip()
+    has_youtube = bool(self.selected_youtube_url)
+    self.add_queue_btn.setEnabled(bool(title and artist and has_youtube))
 
 
-def add_to_queue(self):
-    """Add current song to queue"""
-    if not hasattr(self, 'selected_genie_id') or not self.selected_youtube_url or not self.selected_lrc_path:
+def add_to_queue(self, queue_item=None):
+    """Add current song to queue or append provided item."""
+    if queue_item is None:
+        if not self.selected_youtube_url:
+            return
+        queue_item = {
+            "title": self.title_input.text(),
+            "artist": self.artist_input.text(),
+            "album_art_url": self.album_cover_input.text(),
+            "youtube_url": self.selected_youtube_url,
+            "video_id": getattr(self, "selected_video_id", None),
+            "lrc_path": self.selected_lrc_path,
+            "output_mode": getattr(self, "output_mode", "video"),
+            "prefer_youtube": getattr(self, "prefer_youtube", False),
+        }
+
+    if not queue_item.get("album_art_url"):
+        QMessageBox.warning(self, "Missing Album Art", "Please provide an album art URL before adding to the queue.")
         return
-    
-    queue_item = {
-        'title': self.title_input.text(),
-        'artist': self.artist_input.text(),
-        'album_art_url': self.album_cover_input.text(),
-        'youtube_url': self.selected_youtube_url,
-        'lrc_path': self.selected_lrc_path,
-        'genie_id': self.selected_genie_id
-    }
-    
+
     self.queue_items.append(queue_item)
     self.queue_list.addItem(f"🎵 {queue_item['artist']} - {queue_item['title']}")
     self.update_queue_count()
     self.append_progress_message(f"✅ Added to queue: {queue_item['artist']} - {queue_item['title']}")
-    
-    # Reset selection
-    self.selected_youtube_url = ""
-    self.selected_lrc_path = None
-    if hasattr(self, 'selected_genie_id'):
-        delattr(self, 'selected_genie_id')
+
     self.add_queue_btn.setEnabled(False)
 
 
@@ -59,7 +59,7 @@ def start_batch_processing(self):
     """Start batch processing of queue"""
     if not self.queue_items or self.is_processing:
         return
-    
+
     self.current_queue_index = 0
     self.append_progress_message(f"▶ Starting batch processing ({len(self.queue_items)} songs)...")
     self.set_processing_state(True)
@@ -71,20 +71,50 @@ def process_next_in_queue(self):
     if self.current_queue_index >= len(self.queue_items):
         self.on_batch_complete()
         return
-    
+
     item = self.queue_items[self.current_queue_index]
-    self.append_progress_message(f"🎬 Processing {self.current_queue_index + 1}/{len(self.queue_items)}: {item['artist']} - {item['title']}")
-    
+    self.append_progress_message(
+        f"🎬 Processing {self.current_queue_index + 1}/{len(self.queue_items)}: {item['artist']} - {item['title']}"
+    )
+
+    if not item.get("album_art_url"):
+        QMessageBox.warning(self, "Missing Album Art", "Album art URL is required. Skipping this track.")
+        self.current_queue_index += 1
+        self.process_next_in_queue()
+        return
+
+    lrc_path = self.ensure_lrc_for_item(item)
+    if not lrc_path:
+        reply = QMessageBox.question(
+            self,
+            "Lyrics Missing",
+            "Lyrics could not be resolved. Skip this track?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.current_queue_index += 1
+            self.process_next_in_queue()
+            return
+        else:
+            self.on_batch_complete()
+            return
+
+    item["lrc_path"] = lrc_path
+
     # Update UI with current item
-    self.title_input.setText(item['title'])
-    self.artist_input.setText(item['artist'])
-    self.album_cover_input.setText(item['album_art_url'])
-    self.selected_youtube_url = item['youtube_url']
-    self.selected_lrc_path = item['lrc_path']
-    
+    self.title_input.setText(item["title"])
+    self.artist_input.setText(item["artist"])
+    self.album_cover_input.setText(item["album_art_url"])
+    self.selected_youtube_url = item["youtube_url"]
+    self.selected_lrc_path = item["lrc_path"]
+    self.selected_video_id = item.get("video_id")
+    self.output_mode = item.get("output_mode", "video")
+    self.prefer_youtube = item.get("prefer_youtube", False)
+
     # Start worker
     from app.ui.main_window import WorkerThread
-    self.worker = WorkerThread(self)
+
+    self.worker = WorkerThread(self, job_data=item)
     self.worker.progress.connect(self.update_progress_ui)
     self.worker.finished.connect(self.on_queue_item_complete)
     self.worker.error.connect(self.on_queue_item_error)
@@ -102,13 +132,14 @@ def on_queue_item_error(self, error_message):
     """Handle error in queue item"""
     self.append_progress_message(f"❌ Error processing item {self.current_queue_index + 1}: {error_message}")
     self.worker = None
-    
+
     reply = QMessageBox.question(
-        self, "Error", 
+        self,
+        "Error",
         f"Error processing song:\n{error_message}\n\nContinue with next song?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
     )
-    
+
     if reply == QMessageBox.StandardButton.Yes:
         self.current_queue_index += 1
         self.process_next_in_queue()
@@ -119,9 +150,13 @@ def on_queue_item_error(self, error_message):
 def on_batch_complete(self):
     """Handle completion of batch processing"""
     self.set_processing_state(False)
-    self.append_progress_message(f"✅ Batch processing complete! Processed {self.current_queue_index}/{len(self.queue_items)} songs")
-    QMessageBox.information(self, "Complete", f"Batch processing finished!\nProcessed {self.current_queue_index} out of {len(self.queue_items)} songs.")
-    
+    self.append_progress_message(
+        f"✅ Batch processing complete! Processed {self.current_queue_index}/{len(self.queue_items)} songs"
+    )
+    QMessageBox.information(
+        self, "Complete", f"Batch processing finished!\nProcessed {self.current_queue_index} out of {len(self.queue_items)} songs."
+    )
+
     # Clear queue
     self.clear_queue()
     self.current_queue_index = 0

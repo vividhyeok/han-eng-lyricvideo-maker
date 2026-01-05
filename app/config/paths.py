@@ -13,6 +13,8 @@ OUTPUT_DIR = os.path.join(DATA_DIR, "output")
 LYRICS_DIR = os.path.join(DATA_DIR, "lyrics")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 CONFIG_DIR = os.path.join(DATA_DIR, "config")
+UPLOAD_TITLE_TEMPLATE_PATH = os.path.join(CONFIG_DIR, "upload_title_template.json")
+LYRIC_MAPPING_PATH = os.path.join(CACHE_DIR, "lrc_mapping.json")
 
 TRANSLATION_CACHE_PATH = os.path.join(CACHE_DIR, "translation_cache.json")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "config.json")

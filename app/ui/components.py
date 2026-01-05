@@ -6,6 +6,7 @@ from PyQt6.QtGui import QPixmap, QImage
 import requests
 import threading
 from app.upload.youtube_uploader import upload_video
+from app.upload.title_template import format_upload_title
 
 def load_image_from_url(url, size=(120, 90)):
     """URL에서 이미지를 로드하여 QPixmap으로 반환"""
@@ -183,7 +184,7 @@ class YouTubeUploadDialog(QDialog):
         # 제목 입력
         title_layout = QHBoxLayout()
         title_layout.addWidget(QLabel("제목:"))
-        self.title_input = QLineEdit(f"{title} - {artist}")
+        self.title_input = QLineEdit(format_upload_title(title, artist))
         title_layout.addWidget(self.title_input)
         layout.addLayout(title_layout)
         

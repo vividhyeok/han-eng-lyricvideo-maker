@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "type": "playlist",
+  "name": "Sample Playlist",
+  "source": "ytmusic",
+  "exportedAt": "2024-01-01T00:00:00Z",
+  "items": [
+    {
+      "videoId": "dQw4w9WgXcQ",
+      "title": "Never Gonna Give You Up",
+      "artist": "Rick Astley",
+      "album": "Whenever You Need Somebody",
+      "durationMs": 213000,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+        }
+      ]
+    },
+    {
+      "videoId": "3JZ_D3ELwOQ",
+      "title": "Numb",
+      "artist": "Linkin Park",
+      "album": "Meteora",
+      "durationMs": 187000,
+      "thumbnails": [
+        {
+          "url": "https://i.ytimg.com/vi/3JZ_D3ELwOQ/hqdefault.jpg"
+        }
+      ]
+    }
+  ]
+}
