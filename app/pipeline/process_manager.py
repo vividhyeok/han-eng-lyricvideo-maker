@@ -12,10 +12,13 @@ from app.config.paths import (
     LEGACY_LYRICS_DIR,
 )
 from app.export.premiere_exporter import export_premiere_xml
+from app.lyrics.lrc_resolver import resolve_lrc
 from app.lyrics.openai_handler import parse_lrc_and_translate
 from app.media.video_maker import make_lyric_video, get_audio_duration
 from app.sources.album_art_finder import download_album_art
 from app.sources.youtube_handler import download_youtube_audio
+from app.sources.youtube_utils import extract_video_id
+from app.sources.ytmusic_audio_handler import get_or_download_audio
 
 OutputMode = Literal["video", "premiere_xml"]
 
@@ -26,6 +29,7 @@ class ProcessConfig:
     artist: str
     album_art_url: str
     youtube_url: str
+    video_id: Optional[str] = None
     output_mode: OutputMode = "video"
     target_dir: str = TEMP_DIR
     output_dir: str = OUTPUT_DIR
@@ -62,19 +66,33 @@ class ProcessManager:
             print(f"- 가사: {json_path}")
             print(f"- 출력: {output_path}")
             
+            video_id = config.video_id or extract_video_id(config.youtube_url)
+
             # 오디오 다운로드 (spotDL 우선, 실패 시 YouTube 폴백)
             self.update_progress("고품질 오디오 다운로드 중...", 20)
             
             audio_downloaded = False
+            ytmusic_audio_path = None
             
             # Check if audio already exists (e.g. from manual sync)
             if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
                 print(f"[DEBUG] 기존 오디오 파일 사용: {audio_path}")
                 audio_downloaded = True
             else:
+                if video_id:
+                    ytmusic_audio_path = get_or_download_audio(
+                        video_id,
+                        config.title,
+                        config.artist,
+                        target_filename=self._sanitize_filename(f"{config.artist} - {config.title}"),
+                    )
+                    if ytmusic_audio_path and os.path.exists(ytmusic_audio_path):
+                        audio_path = ytmusic_audio_path
+                        audio_downloaded = True
+                        print(f"[DEBUG] YT Music 오디오 사용: {audio_path}")
                 # Try spotDL unless prefer_youtube is True
                 spotdl_success = False
-                if not config.prefer_youtube:
+                if not config.prefer_youtube and not audio_downloaded:
                     print(f"[DEBUG] spotDL 다운로드 시도: {config.artist} - {config.title}")
                     from app.sources.spotdl_handler import download_audio_simple
                     spotdl_result = download_audio_simple(config.artist, config.title, TEMP_DIR)
@@ -88,7 +106,7 @@ class ProcessManager:
                         spotdl_success = True
                         audio_downloaded = True
                 
-                if not spotdl_success:
+                if not spotdl_success and not audio_downloaded:
                     print("[WARN] spotDL 다운로드 건너뜀/실패, YouTube 다운로드로 폴백")
                     self.update_progress("YouTube 오디오 다운로드 중...", 25)
                     print(f"[DEBUG] YouTube 다운로드 시작: {config.youtube_url}")
@@ -97,7 +115,11 @@ class ProcessManager:
                         print(f"[DEBUG] YouTube 다운로드 완료")
             
             if audio_downloaded:
-                temp_files_to_cleanup.append(audio_path)
+                try:
+                    if os.path.commonpath([os.path.abspath(audio_path), os.path.abspath(TEMP_DIR)]) == os.path.abspath(TEMP_DIR):
+                        temp_files_to_cleanup.append(audio_path)
+                except Exception:
+                    temp_files_to_cleanup.append(audio_path)
             else:
                 raise Exception("오디오 다운로드 실패 (spotDL 및 YouTube 모두 실패)")
             print(f"[DEBUG] 오디오 다운로드 완료: {audio_path}")
@@ -121,6 +143,9 @@ class ProcessManager:
                     print(f"[WARN] 지정된 LRC 파일을 찾을 수 없습니다: {config.lrc_path}")
 
             if lrc_path is None:
+                lrc_path = resolve_lrc(config.title, config.artist, video_id)
+
+            if lrc_path is None:
                 search_dirs = [LYRICS_DIR]
                 if os.path.isdir(LEGACY_LYRICS_DIR) and LEGACY_LYRICS_DIR not in search_dirs:
                     search_dirs.append(LEGACY_LYRICS_DIR)
@@ -137,11 +162,13 @@ class ProcessManager:
                         )
                     except FileNotFoundError:
                         continue
-                if not lrc_files:
-                    raise Exception("가사 파일을 찾을 수 없습니다")
-                lrc_files.sort(key=lambda path: os.path.getmtime(path), reverse=True)
-                lrc_path = lrc_files[0]
-                print(f"[DEBUG] 최신 LRC 파일 사용: {lrc_path}")
+                if lrc_files:
+                    lrc_files.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+                    lrc_path = lrc_files[0]
+                    print(f"[DEBUG] 최신 LRC 파일 사용: {lrc_path}")
+            
+            if lrc_path is None:
+                raise Exception("가사 파일을 찾을 수 없습니다")
             
             # 가사 번역
             try:
@@ -238,8 +265,10 @@ class ProcessManager:
                     print(f"[WARN] 임시 파일 삭제 실패 ({path}): {cleanup_error}")
 
     def validate_config(self, config: ProcessConfig) -> Optional[str]:
-        if not all([config.title, config.artist, config.album_art_url, config.youtube_url]):
-            return "제목, 아티스트, 앨범 아트 URL, YouTube URL을 모두 입력해주세요."
+        if not all([config.title, config.artist, config.album_art_url]):
+            return "제목, 아티스트, 앨범 아트 URL을 모두 입력해주세요."
+        if not (config.youtube_url or config.video_id):
+            return "YouTube URL 또는 video_id를 입력해주세요."
         if config.output_mode not in ("video", "premiere_xml"):
             return "출력 형식이 올바르지 않습니다."
         return None
