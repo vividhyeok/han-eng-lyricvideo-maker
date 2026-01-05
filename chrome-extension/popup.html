@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>YT Music Queue Collector</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 12px;
+        min-width: 320px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      .section {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+      }
+      .btn {
+        background: #1d4ed8;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .btn.secondary {
+        background: #6b7280;
+      }
+      .btn:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid #eee;
+        gap: 8px;
+      }
+      .item-badge {
+        font-size: 11px;
+        background: #f3f4f6;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-right: 6px;
+      }
+      .item-controls button {
+        margin-left: 4px;
+      }
+      #status {
+        font-size: 12px;
+        color: #6b7280;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>YT Music Queue Collector</h1>
+
+    <div class="section">
+      <div id="current-info">현재 탭을 분석하는 중...</div>
+      <button id="add-btn" class="btn" disabled>현재 탭 추가</button>
+    </div>
+
+    <div class="section">
+      <div style="display: flex; align-items: center; justify-content: space-between;">
+        <strong>Saved items</strong>
+        <div>
+          <button id="clear-btn" class="btn secondary">모두 삭제</button>
+          <button id="copy-btn" class="btn">Copy JSON</button>
+        </div>
+      </div>
+      <ul id="items-list"></ul>
+    </div>
+
+    <div id="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>
