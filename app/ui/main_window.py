@@ -18,6 +18,7 @@ from app.pipeline.process_manager import ProcessConfig, ProcessManager
 from app.sources.ytmusic_handler import (
     ytmusic_search, ytmusic_get_lyrics, ytmusic_search_albums, ytmusic_get_album_tracks
 )
+from app.sources.genie_handler import search_genie_songs, get_genie_lyrics
 from app.sources.album_art_finder import download_album_art
 from app.sources.youtube_handler import download_youtube_audio, youtube_search
 from app.ui.components import YouTubeUploadDialog, load_image_from_url, AsyncImageLoader
@@ -27,6 +28,14 @@ from app.ui.manual_entry_dialog import ManualEntryDialog
 
 def sanitize_filename(filename):
     return re.sub(r'[\\/*?:"<>|]', "_", filename)
+
+def _extract_video_id(url):
+    if not url:
+        return None
+    if 'v=' in url:
+        return url.split('v=', 1)[1].split('&', 1)[0]
+    return None
+
 
 class QueueItemWidget(QFrame):
     """Custom widget for items in the processing queue"""
@@ -179,6 +188,7 @@ class ModernMainWindow(QMainWindow):
         self.worker = None
         self.is_manual_mode = False
         self.prefer_youtube = False
+        self.mapped_queue_index = None
         
         # Apply style
         self.setStyleSheet(MODERN_STYLESHEET)
@@ -567,6 +577,7 @@ class ModernMainWindow(QMainWindow):
         self.selected_youtube_url = res['youtube_url']
         self.selected_lrc_path = None
         self.prefer_youtube = False
+        self.mapped_queue_index = None
         self.check_ready()
 
     def on_album_selected(self, idx):
@@ -618,12 +629,12 @@ class ModernMainWindow(QMainWindow):
         has_lrc = bool(self.selected_lrc_path and os.path.exists(self.selected_lrc_path))
         
         self.sync_btn.setEnabled(has_yt and has_meta)
-        self.add_queue_btn.setEnabled(has_yt and has_meta and has_lrc)
+        self.add_queue_btn.setEnabled(has_yt and has_meta)
 
     def start_manual_sync(self):
         if not self.selected_youtube_url: return
         
-        lyrics_text = ""
+        lyrics_text = self._get_prefill_lyrics(self.title_input.text(), self.artist_input.text(), self.selected_youtube_url)
         
         self.log("Downloading audio for sync...")
         filename = sanitize_filename(f"{self.artist_input.text()} - {self.title_input.text()}")
@@ -644,6 +655,11 @@ class ModernMainWindow(QMainWindow):
                 self.selected_lrc_path = lrc_path
                 self.prefer_youtube = True
                 self.log(f"LRC saved: {lrc_path}")
+                if self.mapped_queue_index is not None:
+                    if 0 <= self.mapped_queue_index < len(self.queue_items):
+                        self.queue_items[self.mapped_queue_index]['lrc_path'] = lrc_path
+                        self.queue_items[self.mapped_queue_index]['prefer_youtube'] = True
+                        self.refresh_queue_ui()
                 self.check_ready()
 
     def add_to_queue(self):
@@ -684,6 +700,8 @@ class ModernMainWindow(QMainWindow):
         self.album_cover_input.setText(item['album_art_url'])
         self.selected_youtube_url = item['youtube_url']
         self.selected_lrc_path = item['lrc_path']
+        self.prefer_youtube = item.get('prefer_youtube', False)
+        self.mapped_queue_index = idx
         self.check_ready()
 
     def update_queue_ui(self):
@@ -705,6 +723,14 @@ class ModernMainWindow(QMainWindow):
 
     def start_batch_processing(self):
         if not self.queue_items: return
+        missing_lrc = [
+            i for i, item in enumerate(self.queue_items)
+            if not item.get('lrc_path') or not os.path.exists(item.get('lrc_path'))
+        ]
+        if missing_lrc:
+            self.log("Cannot start batch: missing LRC for some items.")
+            QMessageBox.warning(self, "Missing LRC", "Some queue items are missing LRC files. Sync lyrics first.")
+            return
         self.current_queue_index = 0
         self.is_processing = True
         self.set_ui_processing(True)
@@ -757,6 +783,33 @@ class ModernMainWindow(QMainWindow):
         self.start_batch_btn.setDisabled(state)
         if hasattr(self, 'search_btn'): self.search_btn.setDisabled(state)
         self.progress_bar.setVisible(state)
+
+    def _get_prefill_lyrics(self, title, artist, youtube_url):
+        # Try YTMusic lyrics first, then Genie as fallback.
+        try:
+            vid = _extract_video_id(youtube_url)
+            if vid:
+                self.log('Fetching lyrics from YTMusic...')
+                lyrics = ytmusic_get_lyrics(vid)
+                if lyrics and isinstance(lyrics, str):
+                    return lyrics.strip()
+        except Exception as e:
+            self.log(f'YTMusic lyrics fetch failed: {e}')
+
+        try:
+            query = f"{artist} {title}".strip()
+            if query:
+                self.log('Fetching lyrics from Genie...')
+                results = search_genie_songs(query, limit=1)
+                if results:
+                    _, song_id, _, _, _ = results[0]
+                    lyrics = get_genie_lyrics(str(song_id))
+                    if lyrics and isinstance(lyrics, str):
+                        return lyrics.strip()
+        except Exception as e:
+            self.log(f'Genie lyrics fetch failed: {e}')
+
+        return ''
 
     def log(self, msg):
         time = datetime.now().strftime("%H:%M:%S")
