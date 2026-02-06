@@ -31,6 +31,8 @@ class ProcessConfig:
     output_dir: str = OUTPUT_DIR
     lrc_path: Optional[str] = None
     prefer_youtube: bool = False
+    track_no: Optional[int] = None
+    sub_folder: Optional[str] = None
 
 class ProcessManager:
     def __init__(self, update_progress: Callable[[str, int], None]):
@@ -49,12 +51,23 @@ class ProcessManager:
             print(f"[DEBUG] 디렉토리 확인: {LYRICS_DIR}")
                 
             # 파일명 생성
-            filename = self._sanitize_filename(f"{config.artist} - {config.title}")
+            base_filename = f"{config.artist} - {config.title}"
+            if config.track_no is not None:
+                base_filename = f"{config.track_no:02d} {base_filename}"
+            
+            filename = self._sanitize_filename(base_filename)
+            
+            # 출력 디렉토리 설정 (서브 폴더 지원)
+            current_output_dir = config.output_dir
+            if config.sub_folder:
+                current_output_dir = os.path.join(config.output_dir, self._sanitize_filename(config.sub_folder))
+                os.makedirs(current_output_dir, exist_ok=True)
+
             audio_path = os.path.join(TEMP_DIR, f"{filename}.mp3")
             image_path = os.path.join(TEMP_DIR, f"{filename}.jpg")
             json_path = os.path.join(TEMP_DIR, f"{filename}_lyrics.json")
-            output_path = os.path.join(OUTPUT_DIR, f"{filename}.mp4")
-            premiere_xml_path = os.path.join(OUTPUT_DIR, f"{filename}.xml")
+            output_path = os.path.join(current_output_dir, f"{filename}.mp4")
+            premiere_xml_path = os.path.join(current_output_dir, f"{filename}.xml")
             
             print("[DEBUG] 파일 경로 설정 완료:")
             print(f"- 오디오: {audio_path}")

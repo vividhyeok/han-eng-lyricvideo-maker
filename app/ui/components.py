@@ -1,21 +1,50 @@
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                            QRadioButton, QDialog, QLineEdit, QTextEdit, 
                            QPushButton, QComboBox, QCheckBox, QMessageBox)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QImage
 import requests
 import threading
 from app.upload.youtube_uploader import upload_video
 
+class AsyncImageLoader(QThread):
+    """Background thread to load images from URL"""
+    image_loaded = pyqtSignal(QPixmap)
+
+    def __init__(self, url, size=None):
+        super().__init__()
+        self.url = url
+        self.size = size
+
+    def run(self):
+        if not self.url:
+            return
+        try:
+            # print(f"DEBUG: Loading image async: {self.url}")
+            response = requests.get(self.url, timeout=10)
+            if response.status_code == 200:
+                image = QImage.fromData(response.content)
+                if not image.isNull():
+                    pixmap = QPixmap.fromImage(image)
+                    if self.size:
+                        pixmap = pixmap.scaled(
+                            self.size[0], self.size[1], 
+                            Qt.AspectRatioMode.KeepAspectRatio, 
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                    self.image_loaded.emit(pixmap)
+        except Exception as e:
+            print(f"Image load failed for {self.url}: {e}")
+
 def load_image_from_url(url, size=(120, 90)):
-    """URL에서 이미지를 로드하여 QPixmap으로 반환"""
+    """Synchronous image load (kept for legacy support)"""
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=5)
         image = QImage.fromData(response.content)
         pixmap = QPixmap.fromImage(image)
         return pixmap.scaled(size[0], size[1], Qt.AspectRatioMode.KeepAspectRatio)
     except Exception as e:
-        print("이미지 로드 실패:", e)
+        print("Image load failed:", e)
         return None
 
 def create_album_art_preview():

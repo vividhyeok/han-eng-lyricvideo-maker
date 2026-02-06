@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QScrollArea, QFrame,
     QRadioButton, QButtonGroup, QComboBox, QCheckBox, QMessageBox,
-    QProgressBar, QTextEdit
+    QProgressBar, QTextEdit, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QPixmap, QFont
@@ -15,17 +15,101 @@ from datetime import datetime
 
 from app.config.paths import LYRICS_DIR, TEMP_DIR, ensure_data_dirs
 from app.pipeline.process_manager import ProcessConfig, ProcessManager
-from app.sources.genie_handler import get_genie_lyrics, parse_genie_extra_info, search_genie_songs
-from app.sources.youtube_handler import youtube_search, download_youtube_audio
-from app.ui.components import YouTubeUploadDialog, load_image_from_url
+from app.sources.ytmusic_handler import (
+    ytmusic_search, ytmusic_get_lyrics, ytmusic_search_albums, ytmusic_get_album_tracks
+)
+from app.sources.album_art_finder import download_album_art
+from app.sources.youtube_handler import download_youtube_audio, youtube_search
+from app.ui.components import YouTubeUploadDialog, load_image_from_url, AsyncImageLoader
 from app.ui.styles import MODERN_STYLESHEET
 from app.ui.lyric_sync_dialog import LyricSyncDialog
 from app.ui.manual_entry_dialog import ManualEntryDialog
 
-
 def sanitize_filename(filename):
     return re.sub(r'[\\/*?:"<>|]', "_", filename)
 
+class QueueItemWidget(QFrame):
+    """Custom widget for items in the processing queue"""
+    remove_requested = pyqtSignal()
+    map_requested = pyqtSignal()
+
+    def __init__(self, data, parent=None):
+        super().__init__(parent)
+        self.data = data
+        self.init_ui()
+
+    def init_ui(self):
+        self.setObjectName("queue_item")
+        self.setStyleSheet("""
+            #queue_item {
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 8px;
+                padding: 10px;
+                margin: 2px;
+            }
+            #queue_item:hover {
+                background: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+        
+        # Track No
+        track_no = self.data.get('track_no')
+        if track_no:
+            no_label = QLabel(f"{track_no:02d}")
+            no_label.setFixedWidth(25)
+            no_label.setStyleSheet("font-weight: bold; color: #00d4ff;")
+            layout.addWidget(no_label)
+            
+        # Info
+        info_layout = QVBoxLayout()
+        title = self.data.get('title', 'Unknown')
+        artist = self.data.get('artist', 'Unknown')
+        
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-weight: bold; font-size: 13px; color: white;")
+        info_layout.addWidget(title_label)
+        
+        artist_label = QLabel(artist)
+        artist_label.setStyleSheet("font-size: 11px; color: rgba(255,255,255,0.6);")
+        info_layout.addWidget(artist_label)
+        layout.addLayout(info_layout, stretch=1)
+        
+        # Status Icon (LRC)
+        self.lrc_status_label = QLabel()
+        self.update_lrc_status()
+        layout.addWidget(self.lrc_status_label)
+        
+        # Actions
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(5)
+        
+        self.map_btn = QPushButton("Sync")
+        self.map_btn.setFixedWidth(50)
+        self.map_btn.setFixedHeight(25)
+        self.map_btn.setStyleSheet("font-size: 10px; background: #2c3e50;")
+        self.map_btn.clicked.connect(self.map_requested.emit)
+        actions_layout.addWidget(self.map_btn)
+        
+        remove_btn = QPushButton("✕")
+        remove_btn.setFixedWidth(25)
+        remove_btn.setFixedHeight(25)
+        remove_btn.setStyleSheet("background: #c0392b; border: none; color: white;")
+        remove_btn.clicked.connect(self.remove_requested.emit)
+        actions_layout.addWidget(remove_btn)
+        
+        layout.addLayout(actions_layout)
+
+    def update_lrc_status(self):
+        has_lrc = bool(self.data.get('lrc_path') and os.path.exists(self.data['lrc_path']))
+        if has_lrc:
+            self.lrc_status_label.setText("✅ LRC")
+            self.lrc_status_label.setStyleSheet("color: #2ecc71; font-size: 10px;")
+        else:
+            self.lrc_status_label.setText("❌ NO LRC")
+            self.lrc_status_label.setStyleSheet("color: #e74c3c; font-size: 10px;")
 
 class WorkerThread(QThread):
     progress = pyqtSignal(str, int)
@@ -33,1173 +117,661 @@ class WorkerThread(QThread):
     error = pyqtSignal(str)
     upload_requested = pyqtSignal(str, str, str)
 
-    def __init__(self, main_window):
+    def __init__(self, config):
         super().__init__()
-        self.main_window = main_window
+        self.config = config
         self.process_manager = ProcessManager(self.update_progress)
 
     def run(self):
         try:
-            config = ProcessConfig(
-                title=self.main_window.title_input.text(),
-                artist=self.main_window.artist_input.text(),
-                album_art_url=self.main_window.album_cover_input.text(),
-                youtube_url=self.main_window.selected_youtube_url,
-                output_mode=self.main_window.output_mode,
-                lrc_path=self.main_window.selected_lrc_path,
-                prefer_youtube=getattr(self.main_window, 'prefer_youtube', False)
-            )
-
-            validation_error = self.process_manager.validate_config(config)
+            validation_error = self.process_manager.validate_config(self.config)
             if validation_error:
                 self.error.emit(validation_error)
                 return
 
-            output_path = self.process_manager.process(config)
+            output_path = self.process_manager.process(self.config)
 
             if output_path and os.path.exists(output_path):
-                print(f"[DEBUG] 처리 완료. 출력 파일: {output_path}")
-                
-                if self.main_window.youtube_upload_enabled and output_path.endswith('.mp4'):
-                    self.upload_requested.emit(output_path, config.title, config.artist)
-                else:
-                    self.finished.emit()
+                self.finished.emit()
             else:
-                raise Exception("출력 파일이 생성되지 않았습니다.")
+                raise Exception("Output file was not generated.")
 
         except Exception as e:
-            print(f"[ERROR] WorkerThread 오류: {str(e)}")
+            print(f"[ERROR] WorkerThread error: {str(e)}")
             traceback.print_exc()
             self.error.emit(str(e))
 
     def update_progress(self, message, value):
         self.progress.emit(message, value)
 
+class SearchWorker(QThread):
+    finished = pyqtSignal(list, list)
+    error = pyqtSignal(str)
+
+    def __init__(self, query):
+        super().__init__()
+        self.query = query
+
+    def run(self):
+        try:
+            songs = ytmusic_search(self.query)
+            albums = ytmusic_search_albums(self.query)
+            self.finished.emit(songs, albums)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class ModernMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🎵 Lyric Video Maker - Modern Edition")
-        self.setMinimumSize(1400, 1200)
+        self.setMinimumSize(1400, 900)
         
-        # Apply modern stylesheet
-        self.setStyleSheet(MODERN_STYLESHEET)
-        
-        # Initialize variables
+        # Variables
         self.output_mode = "video"
         self.youtube_upload_enabled = False
         self.selected_youtube_url = ""
         self.selected_lrc_path = None
-        self.genie_results = []
-        self.youtube_results = []
-        self.worker = None
-        self.selected_genie_duration = None
-        self.is_processing = False
-        self.progress_bar = None
-        self.progress_log = None
-        self.last_progress_message = None
-        self.queue_items = []  # Queue for batch processing
+        self.yt_song_results = []
+        self.yt_album_results = []
+        self.queue_items = []
         self.current_queue_index = 0
+        self.is_processing = False
+        self.worker = None
         self.is_manual_mode = False
-        self.manual_data = None
+        self.prefer_youtube = False
         
-        # Create UI
+        # Apply style
+        self.setStyleSheet(MODERN_STYLESHEET)
+        
+        # Init UI
         self.init_ui()
         
     def init_ui(self):
-        """Initialize the modern UI"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Top Bar
-        top_bar = self.create_top_bar()
-        main_layout.addWidget(top_bar)
+        # Top Header
+        header = self.create_header()
+        main_layout.addWidget(header)
         
-        # Content Area (3-column layout)
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(20)
-        content_layout.setContentsMargins(20, 20, 20, 20)
+        # Main Content Area
+        content = QWidget()
+        content_layout = QHBoxLayout(content)
+        content_layout.setSpacing(0)
+        content_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Left Panel (Song Details)
-        left_panel = self.create_song_details_panel()
-        content_layout.addWidget(left_panel, stretch=1)
+        # 1. Left Panel (Search results)
+        self.search_panel = self.create_search_panel()
+        content_layout.addWidget(self.search_panel, stretch=1)
         
-        # Center (Search Results + Settings)
-        center_area = self.create_center_area()
-        content_layout.addWidget(center_area, stretch=2)
+        # 2. Middle Panel (Selected song details)
+        self.detail_panel = self.create_detail_panel()
+        content_layout.addWidget(self.detail_panel, stretch=2)
         
-        # Right Panel (Queue + Progress)
-        right_panel = self.create_queue_panel()
-        content_layout.addWidget(right_panel, stretch=1)
+        # 3. Right Panel (Queue & Progress)
+        self.queue_panel = self.create_queue_panel()
+        content_layout.addWidget(self.queue_panel, stretch=1)
         
-        main_layout.addLayout(content_layout)
+        main_layout.addWidget(content)
         
-    def create_top_bar(self):
-        """Create modern top bar with search"""
-        top_bar = QFrame()
-        top_bar.setObjectName("card")
-        top_bar.setFixedHeight(120)  # Increased from 100 to 120
-        layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(30, 25, 30, 25)  # Increased margins from 20 to 25
+    def create_header(self):
+        header = QFrame()
+        header.setFixedHeight(100)
+        header.setObjectName("sidebar")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(30, 0, 30, 0)
         
-        # App Title
-        title_label = QLabel("🎵 Lyric Video Maker")
+        title_label = QLabel("🎵 LYRIC VIDEO MAKER")
         title_label.setObjectName("title")
         layout.addWidget(title_label)
         
         layout.addStretch()
         
-        # Search Bar
+        # Search area
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Search for a song...")
+        self.search_input.setPlaceholderText("Search for songs or albums...")
         self.search_input.setFixedWidth(400)
-        self.search_input.setMinimumHeight(40)  # Increased from 35 to 40
+        self.search_input.setFixedHeight(40)
         self.search_input.returnPressed.connect(self.search_song)
         layout.addWidget(self.search_input)
         
-        # Search Button
-        search_btn = QPushButton("Search")
-        search_btn.setFixedWidth(120)
-        search_btn.setMinimumHeight(40)  # Increased from 35 to 40
-        search_btn.clicked.connect(self.search_song)
-        layout.addWidget(search_btn)
-
-        # Manual Entry Button
-        manual_btn = QPushButton("Create Manually")
-        manual_btn.setFixedWidth(140)
-        manual_btn.setMinimumHeight(40)
-        manual_btn.clicked.connect(lambda: self.start_manual_entry())
+        self.search_btn = QPushButton("Search")
+        self.search_btn.setFixedWidth(120)
+        self.search_btn.setFixedHeight(40)
+        self.search_btn.clicked.connect(self.search_song)
+        layout.addWidget(self.search_btn)
+        
+        manual_btn = QPushButton("Manual Entry")
+        manual_btn.setObjectName("secondary")
+        manual_btn.setFixedWidth(130)
+        manual_btn.setFixedHeight(40)
+        manual_btn.clicked.connect(self.start_manual_entry)
         layout.addWidget(manual_btn)
         
-        return top_bar
-    
-    def create_left_sidebar(self):
-        """Create left sidebar with settings"""
-        sidebar = QFrame()
-        sidebar.setObjectName("card")
-        sidebar.setFixedWidth(300)
-        layout = QVBoxLayout(sidebar)
-        layout.setSpacing(20)
+        return header
+
+    def create_search_panel(self):
+        panel = QFrame()
+        panel.setObjectName("sidebar")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 20, 20, 20)
         
-        # Settings Title
-        settings_title = QLabel("⚙️ Settings")
-        settings_title.setObjectName("subtitle")
-        layout.addWidget(settings_title)
+        title = QLabel("🔎 Search Results")
+        title.setObjectName("subtitle")
+        layout.addWidget(title)
         
-        # AI Model Selection
-        model_label = QLabel("AI Translation Model")
-        layout.addWidget(model_label)
+        self.search_scroll = QScrollArea()
+        self.search_scroll.setWidgetResizable(True)
+        self.search_content = QWidget()
+        self.results_layout = QVBoxLayout(self.search_content)
+        self.results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.results_layout.setSpacing(10)
+        self.search_scroll.setWidget(self.search_content)
         
+        layout.addWidget(self.search_scroll)
+        
+        return panel
+
+    def create_detail_panel(self):
+        panel = QFrame()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.setSpacing(30)
+        
+        # Selected Song Header
+        header_layout = QHBoxLayout()
+        self.detail_title = QLabel("Select a song to start")
+        self.detail_title.setObjectName("title")
+        self.detail_title.setWordWrap(True)
+        header_layout.addWidget(self.detail_title, stretch=1)
+        layout.addLayout(header_layout)
+        
+        # Main Display
+        display_layout = QHBoxLayout()
+        display_layout.setSpacing(40)
+        
+        # Album Art
+        self.album_art_label = QLabel()
+        self.album_art_label.setFixedSize(350, 350)
+        self.album_art_label.setStyleSheet("background: rgba(255,255,255,0.05); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);")
+        self.album_art_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.album_art_label.setText("No Art")
+        display_layout.addWidget(self.album_art_label)
+        
+        # Info & Settings
+        info_settings = QVBoxLayout()
+        info_settings.setSpacing(15)
+        
+        self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("Title")
+        info_settings.addWidget(QLabel("Title"))
+        info_settings.addWidget(self.title_input)
+        
+        self.artist_input = QLineEdit()
+        self.artist_input.setPlaceholderText("Artist")
+        info_settings.addWidget(QLabel("Artist"))
+        info_settings.addWidget(self.artist_input)
+        
+        self.album_cover_input = QLineEdit()
+        self.album_cover_input.setPlaceholderText("Album Art URL")
+        self.album_cover_input.textChanged.connect(self.update_album_art)
+        info_settings.addWidget(QLabel("Album Art URL"))
+        info_settings.addWidget(self.album_cover_input)
+        
+        # Settings Row
+        settings_row = QHBoxLayout()
+        
+        v_settings = QVBoxLayout()
+        v_settings.addWidget(QLabel("AI Model"))
         self.model_combo = QComboBox()
-        from app.lyrics.ai_models import get_available_models
-        from app.config.config_manager import get_config
+        self.populate_models()
+        v_settings.addWidget(self.model_combo)
+        settings_row.addLayout(v_settings)
         
-        available_models = get_available_models()
-        config = get_config()
-        current_model = config.get_translation_model()
+        v_output = QVBoxLayout()
+        v_output.addWidget(QLabel("Output"))
+        self.output_combo = QComboBox()
+        self.output_combo.addItems(["Video (.mp4)", "Premiere XML"])
+        self.output_combo.currentIndexChanged.connect(self.on_output_changed)
+        v_output.addWidget(self.output_combo)
+        settings_row.addLayout(v_output)
         
-        if not available_models:
-            self.model_combo.addItem("No models available")
-            self.model_combo.setEnabled(False)
-        else:
-            for model_id, model_name in available_models.items():
-                self.model_combo.addItem(model_name, model_id)
-            index = self.model_combo.findData(current_model)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
+        info_settings.addLayout(settings_row)
         
-        self.model_combo.currentIndexChanged.connect(self.on_model_changed)
-        layout.addWidget(self.model_combo)
+        self.upload_check = QCheckBox("Auto-upload to YouTube")
+        self.upload_check.stateChanged.connect(self.on_upload_toggled)
+        info_settings.addWidget(self.upload_check)
         
-        # Output Mode
-        output_label = QLabel("Output Mode")
-        layout.addWidget(output_label)
+        info_settings.addStretch()
+        display_layout.addLayout(info_settings, stretch=1)
         
-        self.output_video_radio = QRadioButton("🎬 Video (.mp4)")
-        self.output_xml_radio = QRadioButton("📄 Premiere XML")
-        self.output_video_radio.setChecked(True)
-        self.output_video_radio.toggled.connect(lambda: self.set_output_mode("video"))
-        self.output_xml_radio.toggled.connect(lambda: self.set_output_mode("premiere_xml"))
-        layout.addWidget(self.output_video_radio)
-        layout.addWidget(self.output_xml_radio)
+        layout.addLayout(display_layout)
         
-        # YouTube Upload
-        self.youtube_upload_checkbox = QCheckBox("📤 Auto-upload to YouTube")
-        self.youtube_upload_checkbox.stateChanged.connect(self.on_youtube_upload_toggled)
-        layout.addWidget(self.youtube_upload_checkbox)
+        # Action Buttons
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(20)
         
-        # Cleanup Button
-        cleanup_btn = QPushButton("🗑️ Clean Temp Files")
-        cleanup_btn.setMinimumHeight(45)
-        cleanup_btn.clicked.connect(self.clean_temp_files)
-        layout.addWidget(cleanup_btn)
+        self.sync_btn = QPushButton("🎵 Sync Lyrics")
+        self.sync_btn.setMinimumHeight(60)
+        self.sync_btn.setObjectName("secondary")
+        self.sync_btn.setEnabled(False)
+        self.sync_btn.clicked.connect(self.start_manual_sync)
+        actions_layout.addWidget(self.sync_btn)
         
+        self.add_queue_btn = QPushButton("➕ Add to Queue")
+        self.add_queue_btn.setMinimumHeight(60)
+        self.add_queue_btn.setObjectName("primary")
+        self.add_queue_btn.setEnabled(False)
+        self.add_queue_btn.clicked.connect(self.add_to_queue)
+        actions_layout.addWidget(self.add_queue_btn)
+        
+        layout.addLayout(actions_layout)
         layout.addStretch()
         
-        return sidebar
-    
-    def create_center_area(self):
-        """Create center area for search results"""
-        center = QFrame()
-        center.setObjectName("card")
-        layout = QVBoxLayout(center)
-        
-        # Results Title
-        results_title = QLabel("🔎 Search Results")
-        results_title.setObjectName("subtitle")
-        layout.addWidget(results_title)
-        
-        # Scroll Area for Results
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
-        scroll_content = QWidget()
-        self.results_layout = QVBoxLayout(scroll_content)
-        self.results_layout.setSpacing(15)
-        
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        return panel
 
-        # Manual YouTube URL Input
-        manual_input_frame = QFrame()
-        manual_input_layout = QHBoxLayout(manual_input_frame)
-        manual_input_layout.setContentsMargins(0, 10, 0, 0)
-        
-        manual_label = QLabel("🔗 Manual YouTube URL:")
-        manual_label.setObjectName("hint")
-        manual_input_layout.addWidget(manual_label)
-        
-        self.manual_youtube_input = QLineEdit()
-        self.manual_youtube_input.setPlaceholderText("Paste YouTube URL here if results are not satisfactory...")
-        manual_input_layout.addWidget(self.manual_youtube_input)
-        
-        manual_set_btn = QPushButton("Set URL")
-        manual_set_btn.setFixedWidth(80)
-        manual_set_btn.clicked.connect(self.on_manual_youtube_url_set)
-        manual_input_layout.addWidget(manual_set_btn)
-        
-        layout.addWidget(manual_input_frame)
-        
-        return center
-    
     def create_queue_panel(self):
-        """Create queue and progress panel"""
         panel = QFrame()
-        panel.setObjectName("card")
-        panel.setFixedWidth(350)
+        panel.setObjectName("sidebar")
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
-        # Queue Header
-        queue_header = QHBoxLayout()
-        queue_title = QLabel("📋 Processing Queue")
-        queue_title.setObjectName("subtitle")
-        queue_header.addWidget(queue_title)
-        
-        self.queue_count_label = QLabel("(0)")
-        self.queue_count_label.setObjectName("hint")
-        queue_header.addWidget(self.queue_count_label)
-        queue_header.addStretch()
-        
+        header = QHBoxLayout()
+        header.addWidget(QLabel("📋 Queue"))
+        self.queue_count = QLabel("(0)")
+        header.addWidget(self.queue_count)
+        header.addStretch()
         clear_btn = QPushButton("Clear")
+        clear_btn.setFixedHeight(25)
         clear_btn.setObjectName("secondary")
-        clear_btn.setMaximumWidth(60)
         clear_btn.clicked.connect(self.clear_queue)
-        queue_header.addWidget(clear_btn)
-        layout.addLayout(queue_header)
+        header.addWidget(clear_btn)
+        layout.addLayout(header)
         
-        # Queue List
-        from PyQt6.QtWidgets import QListWidget
-        self.queue_list = QListWidget()
-        self.queue_list.setMinimumHeight(200)
-        self.queue_list.setStyleSheet("""
-            QListWidget {
-                background: rgba(0, 0, 0, 0.3);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                padding: 5px;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-radius: 4px;
-                margin: 2px;
-            }
-            QListWidget::item:selected {
-                background: rgba(0, 212, 255, 0.3);
-            }
-            QListWidget::item:hover {
-                background: rgba(255, 255, 255, 0.1);
-            }
-        """)
-        layout.addWidget(self.queue_list)
+        self.queue_list_ui = QListWidget()
+        layout.addWidget(self.queue_list_ui)
         
-        # Start Batch Button
-        self.start_batch_btn = QPushButton("▶ Start Batch Processing")
-        self.start_batch_btn.setMinimumHeight(50)
+        self.start_batch_btn = QPushButton("▶ Start Batch")
         self.start_batch_btn.setObjectName("primary")
+        self.start_batch_btn.setMinimumHeight(50)
         self.start_batch_btn.setEnabled(False)
         self.start_batch_btn.clicked.connect(self.start_batch_processing)
         layout.addWidget(self.start_batch_btn)
         
-        # Progress Section
-        progress_label = QLabel("📈 Live Progress")
-        progress_label.setObjectName("hint")
-        layout.addWidget(progress_label)
+        # Log
+        layout.addWidget(QLabel("📈 Log"))
+        self.progress_log = QTextEdit()
+        self.progress_log.setReadOnly(True)
+        layout.addWidget(self.progress_log)
         
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
         
-        self.progress_log = QTextEdit()
-        self.progress_log.setReadOnly(True)
-        self.progress_log.setMinimumHeight(200)
-        self.progress_log.setStyleSheet("font-size: 12px; background: rgba(0,0,0,0.3);")
-        layout.addWidget(self.progress_log)
-        
         return panel
-    
-    def create_song_details_panel(self):
-        """Create song details panel"""
-        panel = QFrame()
-        panel.setObjectName("card")
-        panel.setFixedWidth(350)
-        layout = QVBoxLayout(panel)
-        layout.setSpacing(20)
-        
-        # Details Title
-        details_title = QLabel("📝 Song Details")
-        details_title.setObjectName("subtitle")
-        layout.addWidget(details_title)
-        
-        # Album Art Preview
-        self.album_art_label = QLabel()
-        self.album_art_label.setFixedSize(300, 300)
-        self.album_art_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.album_art_label.setStyleSheet("""
-            QLabel {
-                background: rgba(255, 255, 255, 0.05);
-                border-radius: 12px;
-                border: 2px dashed rgba(255, 255, 255, 0.2);
-            }
-        """)
-        self.album_art_label.setText("No album art")
-        layout.addWidget(self.album_art_label)
-        
-        # Song Info
-        info_frame = QFrame()
-        info_layout = QVBoxLayout(info_frame)
-        info_layout.setSpacing(10)
-        
-        # Title
-        title_label = QLabel("Title:")
-        title_label.setObjectName("hint")
-        info_layout.addWidget(title_label)
-        self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("Song title...")
-        info_layout.addWidget(self.title_input)
-        
-        # Artist
-        artist_label = QLabel("Artist:")
-        artist_label.setObjectName("hint")
-        info_layout.addWidget(artist_label)
-        self.artist_input = QLineEdit()
-        self.artist_input.setPlaceholderText("Artist name...")
-        info_layout.addWidget(self.artist_input)
-        
-        # Album Cover URL
-        cover_label = QLabel("Album Cover URL:")
-        cover_label.setObjectName("hint")
-        info_layout.addWidget(cover_label)
-        self.album_cover_input = QLineEdit()
-        self.album_cover_input.setPlaceholderText("https://...")
-        self.album_cover_input.textChanged.connect(self.update_album_art)
-        info_layout.addWidget(self.album_cover_input)
-        
-        layout.addWidget(info_frame)
-        
-        # Add to Queue Button
-        self.add_queue_btn = QPushButton("➕ Add to Queue")
-        self.add_queue_btn.setMinimumHeight(45)
-        self.add_queue_btn.setEnabled(False)
-        self.add_queue_btn.clicked.connect(self.add_to_queue)
-        layout.addWidget(self.add_queue_btn)
 
-        # Start Sync Button
-        self.start_sync_btn = QPushButton("🎵 Start Lyric Sync")
-        self.start_sync_btn.setMinimumHeight(40)
-        self.start_sync_btn.setEnabled(False)
-        self.start_sync_btn.clicked.connect(self.start_manual_sync)
-        self.start_sync_btn.setStyleSheet("background-color: #2c3e50; color: white; border: 1px solid #34495e;")
-        layout.addWidget(self.start_sync_btn)
-
-        # Settings Section
-        settings_frame = QFrame()
-        settings_layout = QVBoxLayout(settings_frame)
-        settings_layout.setSpacing(10)
-        settings_layout.setContentsMargins(0, 20, 0, 0)
-
-        # Settings Title
-        settings_title = QLabel("⚙️ Settings")
-        settings_title.setObjectName("subtitle")
-        settings_layout.addWidget(settings_title)
-
-        # AI Model Selection
-        model_label = QLabel("AI Translation Model")
-        settings_layout.addWidget(model_label)
-        
-        self.model_combo = QComboBox()
+    # Logic Methods
+    def populate_models(self):
         from app.lyrics.ai_models import get_available_models
         from app.config.config_manager import get_config
-        
-        available_models = get_available_models()
+        models = get_available_models()
         config = get_config()
-        current_model = config.get_translation_model()
-        
-        if not available_models:
-            self.model_combo.addItem("No models available")
-            self.model_combo.setEnabled(False)
-        else:
-            for model_id, model_name in available_models.items():
-                self.model_combo.addItem(model_name, model_id)
-            index = self.model_combo.findData(current_model)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
-        
+        current = config.get_translation_model()
+        for mid, name in models.items():
+            self.model_combo.addItem(name, mid)
+        idx = self.model_combo.findData(current)
+        if idx >= 0: self.model_combo.setCurrentIndex(idx)
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
-        settings_layout.addWidget(self.model_combo)
-        
-        # Output Mode
-        output_label = QLabel("Output Mode")
-        settings_layout.addWidget(output_label)
-        
-        self.output_video_radio = QRadioButton("🎬 Video (.mp4)")
-        self.output_xml_radio = QRadioButton("📄 Premiere XML")
-        self.output_video_radio.setChecked(True)
-        self.output_video_radio.toggled.connect(lambda: self.set_output_mode("video"))
-        self.output_xml_radio.toggled.connect(lambda: self.set_output_mode("premiere_xml"))
-        settings_layout.addWidget(self.output_video_radio)
-        settings_layout.addWidget(self.output_xml_radio)
-        
-        # YouTube Upload
-        self.youtube_upload_checkbox = QCheckBox("📤 Auto-upload to YouTube")
-        self.youtube_upload_checkbox.stateChanged.connect(self.on_youtube_upload_toggled)
-        settings_layout.addWidget(self.youtube_upload_checkbox)
 
-        layout.addWidget(settings_frame)
-        layout.addStretch()
-        
-        return panel
+    def on_model_changed(self, idx):
+        mid = self.model_combo.itemData(idx)
+        from app.config.config_manager import get_config
+        get_config().set_translation_model(mid)
 
+    def on_output_changed(self, idx):
+        self.output_mode = "video" if idx == 0 else "premiere_xml"
 
-        layout.addStretch()
+    def on_upload_toggled(self, state):
+        self.youtube_upload_enabled = bool(state == Qt.CheckState.Checked.value)
 
-        
-
-        return panel
-
-    
-
-    def start_manual_entry(self, initial_data=None):
-        dialog = ManualEntryDialog(self)
-        if initial_data:
-            dialog.title_input.setText(initial_data.get("title", ""))
-            dialog.artist_input.setText(initial_data.get("artist", ""))
-            dialog.art_input.setText(initial_data.get("album_art", ""))
-        
-        if dialog.exec():
-            self.manual_data = dialog.get_data()
-            self.is_manual_mode = True
-            
-            # Update UI with manual data
-            self.title_input.setText(self.manual_data["title"])
-            self.artist_input.setText(self.manual_data["artist"])
-            self.album_cover_input.setText(self.manual_data["album_art"])
-            
-            # Handle YouTube URL if provided
-            youtube_url = self.manual_data.get("youtube_url", "").strip()
-            if youtube_url:
-                self.selected_youtube_url = youtube_url
-                print(f"[DEBUG] Manual YouTube URL: {self.selected_youtube_url}")
-                self.check_ready_to_add()
-                
-                # Ask to start sync immediately
-                reply = QMessageBox.question(
-                    self, "Start Sync", 
-                    "YouTube URL provided. Start syncing lyrics now?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    self.start_manual_sync()
-                    return
-
-            # Search YouTube to show alternatives or if URL was not provided
-            query = f"{self.manual_data['artist']} {self.manual_data['title']}"
-            try:
-                self.youtube_results = youtube_search(query)
-                self.display_youtube_results()
-                if not youtube_url:
-                    QMessageBox.information(self, "Select Audio", "Please select a YouTube video to use as the audio source.")
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"YouTube search failed: {e}")
-
-    def start_manual_sync(self):
-        if not self.selected_youtube_url:
-            QMessageBox.warning(self, "Warning", "Please select a YouTube video first.")
+    def update_album_art(self, url):
+        if not url:
+            self.album_art_label.setText("No Art")
             return
-
-        # If manual data is missing (e.g. normal flow but want to sync manually),
-        # try to use current UI inputs
-        lyrics_text = ""
-        if self.manual_data and "lyrics" in self.manual_data:
-            lyrics_text = self.manual_data["lyrics"]
+        pixmap = load_image_from_url(url, size=(350, 350))
+        if pixmap:
+            self.album_art_label.setPixmap(pixmap)
         else:
-            # Try to read from existing LRC if available?
-            if self.selected_lrc_path and os.path.exists(self.selected_lrc_path):
-                try:
-                    with open(self.selected_lrc_path, 'r', encoding='utf-8') as f:
-                        # Strip timestamps for editing
-                        content = f.read()
-                        # Simple regex to remove timestamps [mm:ss.xx]
-                        lyrics_text = re.sub(r'\[\d{2}:\d{2}\.\d{2,3}\]', '', content)
-                except:
-                    pass
-            
-            if not lyrics_text:
-                # Ask user for lyrics
-                dialog = ManualEntryDialog(self)
-                # Pre-fill title/artist
-                dialog.title_input.setText(self.title_input.text())
-                dialog.artist_input.setText(self.artist_input.text())
-                dialog.art_input.setText(self.album_cover_input.text())
-                if self.selected_youtube_url:
-                    dialog.youtube_input.setText(self.selected_youtube_url)
-                
-                if dialog.exec():
-                    data = dialog.get_data()
-                    lyrics_text = data["lyrics"]
-                    # Update other fields if changed
-                    self.title_input.setText(data["title"])
-                    self.artist_input.setText(data["artist"])
-                    self.album_cover_input.setText(data["album_art"])
-                    
-                    if data.get("youtube_url"):
-                        self.selected_youtube_url = data["youtube_url"]
-                        self.check_ready_to_add()
-                else:
-                    return
-
-        # Download audio
-        self.progress_log.append("Downloading audio for sync...")
-        QApplication.processEvents()
-        
-        artist = self.artist_input.text().strip() or "Unknown"
-        title = self.title_input.text().strip() or "Unknown"
-        filename = sanitize_filename(f"{artist} - {title}")
-        
-        try:
-            audio_path = download_youtube_audio(self.selected_youtube_url, filename)
-            
-            if not audio_path or not os.path.exists(audio_path):
-                QMessageBox.warning(self, "Error", "Failed to download audio.")
-                return
-
-            # Open Sync Dialog
-            sync_dialog = LyricSyncDialog(audio_path, lyrics_text, self)
-            if sync_dialog.exec():
-                lrc_content = sync_dialog.get_lrc_content()
-                if lrc_content:
-                    # Save LRC
-                    ensure_data_dirs()
-                    lrc_path = os.path.join(LYRICS_DIR, f"{filename}.lrc")
-                    with open(lrc_path, "w", encoding="utf-8") as f:
-                        f.write(lrc_content)
-                    
-                    self.selected_lrc_path = lrc_path
-                    self.progress_log.append(f"LRC saved to {lrc_path}")
-                    
-                    # Set flag to prefer YouTube audio since we synced to it
-                    self.prefer_youtube = True
-                    
-                    # Enable Add to Queue button
-                    self.check_ready_to_add()
-                    
-                    # Auto-add to queue if possible
-                    if self.add_queue_btn.isEnabled():
-                        self.add_to_queue(silent=True)
-                        QMessageBox.information(self, "Success", "Lyrics synced, saved, and added to queue!")
-                    else:
-                        QMessageBox.information(self, "Success", "Lyrics synced and saved! Please fill in missing info to add to queue.")
-                        
-                    self.is_manual_mode = False # Reset mode
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Sync process failed: {e}")
-            traceback.print_exc()
+            self.album_art_label.setText("Load Failed")
 
     def search_song(self):
-        """Search for songs on Genie"""
         query = self.search_input.text().strip()
-        if not query:
-            QMessageBox.warning(self, "Warning", "Please enter a search query")
-            return
+        if not query: return
         
-        # Clear previous results
+        self.clear_results()
+        self.log(f"Searching for '{query}'...")
+        self.search_btn.setEnabled(False)
+        self.search_input.setEnabled(False)
+        
+        # Loading indicator
+        loading_label = QLabel("🔍 Searching... Please wait.")
+        loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading_label.setStyleSheet("color: #00d4ff; font-size: 14px; margin-top: 20px;")
+        self.results_layout.addWidget(loading_label)
+        
+        self.search_worker = SearchWorker(query)
+        self.search_worker.finished.connect(self.on_search_finished)
+        self.search_worker.error.connect(self.on_search_error)
+        self.search_worker.start()
+
+    def on_search_finished(self, songs, albums):
+        self.search_btn.setEnabled(True)
+        self.search_input.setEnabled(True)
         self.clear_results()
         
-        # Search Genie
-        try:
-            self.genie_results = search_genie_songs(query)
-            if not self.genie_results:
-                reply = QMessageBox.question(
-                    self, "No Results", 
-                    "No songs found on Genie. Do you want to enter details manually?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    self.start_manual_entry()
-                return
+        self.yt_song_results = songs
+        self.yt_album_results = albums
+        
+        self.display_yt_results()
+        self.log(f"Search complete. Found {len(songs)} songs, {len(albums)} albums.")
 
-            self.display_genie_results()
-        except Exception as e:
-            print(f"[ERROR] Genie search failed: {e}")
-            QMessageBox.warning(self, "Search Error", f"Genie search failed: {e}")
-    
+    def on_search_error(self, err):
+        self.search_btn.setEnabled(True)
+        self.search_input.setEnabled(True)
+        self.clear_results()
+        self.results_layout.addWidget(QLabel(f"Search failed: {err}"))
+        self.log(f"Search error: {err}")
+
     def clear_results(self):
-        """Clear search results"""
         while self.results_layout.count():
             item = self.results_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-    
-    def display_genie_results(self):
-        """Display Genie search results as cards"""
-        if not self.genie_results:
-            return
-        
-        # Section Title
-        genie_title = QLabel("🎵 Genie Music Results")
-        genie_title.setObjectName("subtitle")
-        genie_title.setStyleSheet("font-size: 16px; margin-top: 10px;")
-        self.results_layout.addWidget(genie_title)
-        
-        # Button Group
-        self.genie_button_group = QButtonGroup()
-        
-        for idx, result in enumerate(self.genie_results):
-            card = self.create_result_card(result, idx, "genie")
-            self.results_layout.addWidget(card)
+            if item.widget(): item.widget().deleteLater()
 
-    def display_youtube_results(self):
-        """Display YouTube search results as cards"""
-        # Clear previous youtube results
-        # This is a bit of a hack to find and remove only youtube results
-        for i in reversed(range(self.results_layout.count())):
-            item = self.results_layout.itemAt(i)
-            if item and item.widget():
-                # Heuristic to identify youtube section title
-                if isinstance(item.widget(), QLabel) and "YouTube Results" in item.widget().text():
-                    item.widget().deleteLater()
-                    # We assume youtube results are after this title
-                    # A better implementation would be to hold a reference to the widgets
-                    for j in reversed(range(i, self.results_layout.count())):
-                        item_to_remove = self.results_layout.itemAt(j)
-                        if item_to_remove and item_to_remove.widget():
-                            item_to_remove.widget().deleteLater()
-                    break
+    def display_yt_results(self):
+        # Albums
+        if self.yt_album_results:
+            self.results_layout.addWidget(self.create_header_label("💿 Albums"))
+            self.album_group = QButtonGroup()
+            for i, res in enumerate(self.yt_album_results):
+                card = self.create_result_card(res, i, "album")
+                self.results_layout.addWidget(card)
+        
+        # Songs
+        if self.yt_song_results:
+            self.results_layout.addWidget(self.create_header_label("🎵 Songs"))
+            self.song_group = QButtonGroup()
+            for i, res in enumerate(self.yt_song_results):
+                card = self.create_result_card(res, i, "song")
+                self.results_layout.addWidget(card)
+        
+        if not self.yt_song_results and not self.yt_album_results:
+            self.results_layout.addWidget(QLabel("No results found."))
+        
+        self.results_layout.addStretch()
 
-        if not self.youtube_results:
-            return
-        
-        # Section Title
-        youtube_title = QLabel("🎥 YouTube Results")
-        youtube_title.setObjectName("subtitle")
-        youtube_title.setStyleSheet("font-size: 16px; margin-top: 20px;")
-        self.results_layout.addWidget(youtube_title)
-        
-        # Button Group
-        self.youtube_button_group = QButtonGroup()
-        
-        for idx, result in enumerate(self.youtube_results):
-            card = self.create_result_card(result, idx, "youtube")
-            self.results_layout.addWidget(card)
-        
-        # Auto-select removed to allow manual selection
-        # if self.youtube_results:
-        #     self.youtube_button_group.button(0).click()
+    def create_header_label(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-weight: bold; margin-top: 10px; color: #00d4ff;")
+        return lbl
 
-    def create_result_card(self, result, idx, source):
-        """Create a modern result card"""
+    def create_result_card(self, res, idx, type):
         card = QFrame()
         card.setObjectName("card")
-        card.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout = QHBoxLayout(card)
-        layout.setSpacing(15)
+        card.setFixedHeight(80)
+        lay = QHBoxLayout(card)
         
-        # Radio Button
         radio = QRadioButton()
-        if source == "genie":
-            self.genie_button_group.addButton(radio, idx)
-            radio.clicked.connect(lambda: self.on_genie_selected(idx))
-        else:
-            self.youtube_button_group.addButton(radio, idx)
-            radio.clicked.connect(lambda: self.on_youtube_selected(idx))
-        layout.addWidget(radio)
-
-        # Thumbnail
-        thumb_label = QLabel()
-        thumb_label.setFixedSize(80, 80)
-        thumb_label.setStyleSheet("border-radius: 8px;")
-
-        if source == "genie":
-            thumb_url = result[3]  # album_art_url
-        else:
-            thumb_url = result.get('thumbnail', '')
-
-        if thumb_url:
-            pixmap = load_image_from_url(thumb_url)
-            if pixmap:
-                thumb_label.setPixmap(pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
-
-        layout.addWidget(thumb_label)
-
-        # Info
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(5)
-
-        if source == "genie":
-            title = result[0]
-            artist, album = parse_genie_extra_info(result[2])
-            duration_sec = result[4]
-            duration_str = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}" if duration_sec is not None else "N/A"
-        else:
-            title = result.get('title', 'Unknown')
-            artist = "YouTube" # Simplified for YouTube results
-            album = None
-            duration_str = result.get('duration', "N/A")
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        title_label.setWordWrap(True)
-        info_layout.addWidget(title_label)
-
-        artist_label = QLabel(f"🎤 {artist}")
-        artist_label.setObjectName("hint")
-        info_layout.addWidget(artist_label)
+        if type == "album": 
+            self.album_group.addButton(radio, idx)
+            radio.clicked.connect(lambda: self.on_album_selected(idx))
+        else: 
+            self.song_group.addButton(radio, idx)
+            radio.clicked.connect(lambda: self.on_song_selected(idx))
+        lay.addWidget(radio)
         
-        duration_label = QLabel(f"⏳ {duration_str}")
-        duration_label.setObjectName("hint")
-        info_layout.addWidget(duration_label)
-
-        if source == "genie" and album:
-            album_label = QLabel(f"💿 {album}")
-            album_label.setObjectName("hint")
-            info_layout.addWidget(album_label)
-
-        info_layout.addStretch()
-        layout.addLayout(info_layout, stretch=1)
-
+        # Thumb
+        thumb = QLabel()
+        thumb.setFixedSize(60, 60)
+        thumb.setStyleSheet("background-color: rgba(255,255,255,0.1); border-radius: 4px;")
+        
+        url = res.get('album_art', '')
+        if url:
+             loader = AsyncImageLoader(url, size=(60, 60))
+             loader.image_loaded.connect(thumb.setPixmap)
+             thumb.loader = loader # Keep reference
+             loader.start()
+        
+        lay.addWidget(thumb)
+        
+        info = QVBoxLayout()
+        t_lbl = QLabel(res.get('title'))
+        t_lbl.setStyleSheet("font-weight: bold;")
+        info.addWidget(t_lbl)
+        a_lbl = QLabel(res.get('artist'))
+        a_lbl.setStyleSheet("font-size: 11px; color: grey;")
+        info.addWidget(a_lbl)
+        lay.addLayout(info, stretch=1)
+        
         return card
-    
-    def on_genie_selected(self, idx):
-        """Handle Genie result selection and trigger YouTube search"""
-        if idx < 0 or idx >= len(self.genie_results):
-            return
-        
-        result = self.genie_results[idx]
-        # result: (title, song_id, extra_info, album_art_url, duration)
-        title, song_id, extra_info, album_art_url, duration = result
-        
-        artist, album = parse_genie_extra_info(extra_info)
-        self.title_input.setText(title)
-        self.artist_input.setText(artist)
-        self.album_cover_input.setText(album_art_url)
-        self.selected_genie_duration = duration
-        self.selected_genie_id = song_id  # Store song_id for queue
 
-        # Automatically search YouTube with details
+    def on_song_selected(self, idx):
+        res = self.yt_song_results[idx]
+        self.detail_title.setText(f"🎵 {res['title']}")
+        self.title_input.setText(res['title'])
+        self.artist_input.setText(res['artist'])
+        self.album_cover_input.setText(res['album_art'])
+        self.selected_youtube_url = res['youtube_url']
+        self.selected_lrc_path = None
+        self.prefer_youtube = False
+        self.check_ready()
+
+    def on_album_selected(self, idx):
+        album = self.yt_album_results[idx]
+        self.log(f"Loading album: {album['title']}")
         try:
-            query = f"{artist} {title}"
-            print(f"[DEBUG] 자동 YouTube 검색: '{query}', 길이: {duration}초")
-            self.youtube_results = youtube_search(query, target_duration=duration)
-            self.display_youtube_results()
+            tracks = ytmusic_get_album_tracks(album['browse_id'])
+            self.display_album_view(album, tracks)
         except Exception as e:
-            print(f"[ERROR] YouTube search failed: {e}")
-            self.youtube_results = []
-            self.display_youtube_results() # Clear previous results on failure
+            self.log(f"Album error: {e}")
 
-        # Download lyrics
-        try:
-            self.selected_lrc_path = None
-            if song_id:
-                lyrics = get_genie_lyrics(song_id)
-                if lyrics:
-                    ensure_data_dirs()
-                    os.makedirs(LYRICS_DIR, exist_ok=True)
-                    lrc_path = os.path.join(LYRICS_DIR, f"{song_id}.lrc")
-                    with open(lrc_path, "w", encoding="utf-8") as lrc_file:
-                        lrc_file.write(lyrics.strip() + "\n")
-                    self.selected_lrc_path = lrc_path
-                    print(f"[DEBUG] LRC 파일 저장: {lrc_path}")
-                else:
-                    print("[WARN] 가사 데이터를 가져오지 못했습니다.")
-                    reply = QMessageBox.question(
-                        self, "Lyrics Missing", 
-                        "Lyrics not found. Do you want to create them manually?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                    )
-                    if reply == QMessageBox.StandardButton.Yes:
-                        # Pre-fill manual entry with Genie data
-                        self.start_manual_entry(initial_data={
-                            "title": title,
-                            "artist": artist,
-                            "album_art": album_art_url
-                        })
-                        return
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to download lyrics: {e}")
+    def display_album_view(self, album, tracks):
+        self.clear_results()
+        self.results_layout.addWidget(self.create_header_label(f"💿 Album: {album['title']}"))
         
-        # Enable Add to Queue button
-        self.check_ready_to_add()
-    
-    def on_youtube_selected(self, idx):
-        """Handle YouTube result selection"""
-        if idx < 0 or idx >= len(self.youtube_results):
-            return
+        add_all = QPushButton(f"Add all {len(tracks)} songs to queue")
+        add_all.clicked.connect(lambda: self.add_album_to_queue(album, tracks))
+        self.results_layout.addWidget(add_all)
         
-        result = self.youtube_results[idx]
-        self.selected_youtube_url = result.get('link', '')
-        print(f"[DEBUG] 선택된 YouTube URL: {self.selected_youtube_url}")
+        for i, t in enumerate(tracks):
+            lbl = QLabel(f"{i+1}. {t['title']}")
+            lbl.setStyleSheet("padding: 5px; border-bottom: 1px solid rgba(255,255,255,0.05);")
+            self.results_layout.addWidget(lbl)
         
-        # if self.is_manual_mode:
-        #     reply = QMessageBox.question(
-        #         self, "Start Sync", 
-        #         "Selected audio source. Start syncing lyrics now?",
-        #         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        #     )
-        #     if reply == QMessageBox.StandardButton.Yes:
-        #         self.start_manual_sync()
-        
-        # Enable Add to Queue button
-        self.check_ready_to_add()
+        back_btn = QPushButton("← Back to results")
+        back_btn.clicked.connect(self.display_yt_results)
+        self.results_layout.addWidget(back_btn)
+        self.results_layout.addStretch()
 
-    def on_manual_youtube_url_set(self):
-        """Handle manual YouTube URL input"""
-        url = self.manual_youtube_input.text().strip()
-        if not url:
-            QMessageBox.warning(self, "Warning", "Please enter a YouTube URL")
-            return
-        
-        # Basic validation
-        if "youtube.com" not in url and "youtu.be" not in url:
-            QMessageBox.warning(self, "Warning", "Please enter a valid YouTube URL")
-            return
+    def add_album_to_queue(self, album, tracks):
+        for t in tracks:
+            item = {
+                'title': t['title'],
+                'artist': t['artist'],
+                'album_art_url': t['album_art'],
+                'youtube_url': t['youtube_url'],
+                'lrc_path': None,
+                'track_no': t.get('track_no'),
+                'sub_folder': album['title'],
+                'output_mode': self.output_mode,
+                'prefer_youtube': False
+            }
+            self.enqueue(item)
+        self.log(f"Added album '{album['title']}' to queue.")
 
-        self.selected_youtube_url = url
-        print(f"[DEBUG] 수동 설정된 YouTube URL: {self.selected_youtube_url}")
-        
-        # Clear selection in radio buttons if any
-        if hasattr(self, 'youtube_button_group'):
-            button = self.youtube_button_group.checkedButton()
-            if button:
-                self.youtube_button_group.setExclusive(False)
-                button.setChecked(False)
-                self.youtube_button_group.setExclusive(True)
-
-        QMessageBox.information(self, "Success", "YouTube URL set successfully!")
-        self.check_ready_to_add()
-
-    
-    def check_ready_to_add(self):
-        """Check if all required info is present to add to queue"""
-        title = self.title_input.text().strip()
-        artist = self.artist_input.text().strip()
-        
-        # Basic requirements
-        has_info = bool(title and artist)
-        has_youtube = bool(self.selected_youtube_url)
-        
-        # Enable Sync Button if we have YouTube URL
-        if hasattr(self, 'start_sync_btn'):
-            self.start_sync_btn.setEnabled(has_youtube)
-            if self.is_manual_mode:
-                self.start_sync_btn.setText("🎵 Start Lyric Sync (Manual Mode)")
-            else:
-                self.start_sync_btn.setText("🎵 Start Lyric Sync")
-
-        # For Add to Queue, we need LRC path OR we need to be in a state where we can generate it?
-        # Actually, Add to Queue requires LRC path usually.
-        # But if we are in manual mode, we might not have LRC yet until we sync.
+    def check_ready(self):
+        has_yt = bool(self.selected_youtube_url)
+        has_meta = bool(self.title_input.text() and self.artist_input.text())
         has_lrc = bool(self.selected_lrc_path and os.path.exists(self.selected_lrc_path))
         
-        self.add_queue_btn.setEnabled(has_info and has_youtube and has_lrc)
+        self.sync_btn.setEnabled(has_yt and has_meta)
+        self.add_queue_btn.setEnabled(has_yt and has_meta and has_lrc)
 
-    def add_to_queue(self, silent=False):
-        """Add current configuration to queue"""
-        title = self.title_input.text().strip()
-        artist = self.artist_input.text().strip()
-        album_art = self.album_cover_input.text().strip()
+    def start_manual_sync(self):
+        if not self.selected_youtube_url: return
         
-        if not title or not artist or not self.selected_youtube_url:
+        lyrics_text = ""
+        
+        self.log("Downloading audio for sync...")
+        filename = sanitize_filename(f"{self.artist_input.text()} - {self.title_input.text()}")
+        audio_path = download_youtube_audio(self.selected_youtube_url, filename)
+        
+        if not audio_path:
+            QMessageBox.warning(self, "Error", "Failed to download audio for sync.")
             return
-            
-        # If manual sync was done, we prefer YouTube audio
-        prefer_youtube = getattr(self, 'prefer_youtube', False)
-        
-        item_data = {
-            "title": title,
-            "artist": artist,
-            "album_art_url": album_art,
-            "youtube_url": self.selected_youtube_url,
-            "lrc_path": self.selected_lrc_path,
-            "output_mode": self.output_mode,
-            "status": "Pending",
-            "prefer_youtube": prefer_youtube
+
+        dialog = LyricSyncDialog(audio_path, lyrics_text, self)
+        if dialog.exec():
+            lrc_content = dialog.get_lrc_content()
+            if lrc_content:
+                ensure_data_dirs()
+                lrc_path = os.path.join(LYRICS_DIR, f"{filename}.lrc")
+                with open(lrc_path, "w", encoding="utf-8") as f:
+                    f.write(lrc_content)
+                self.selected_lrc_path = lrc_path
+                self.prefer_youtube = True
+                self.log(f"LRC saved: {lrc_path}")
+                self.check_ready()
+
+    def add_to_queue(self):
+        item = {
+            'title': self.title_input.text(),
+            'artist': self.artist_input.text(),
+            'album_art_url': self.album_cover_input.text(),
+            'youtube_url': self.selected_youtube_url,
+            'lrc_path': self.selected_lrc_path,
+            'output_mode': self.output_mode,
+            'prefer_youtube': self.prefer_youtube
         }
-        
-        self.queue_items.append(item_data)
-        
-        # Add to UI list
-        list_item = f"{artist} - {title} [{self.output_mode}]"
-        self.queue_list.addItem(list_item)
-        
-        # Reset selection (optional)
-        # self.clear_selection()
-        
-        # Enable Start Batch
-        self.start_batch_btn.setEnabled(True)
-        
-        if not silent:
-            QMessageBox.information(self, "Added", "Song added to queue!")
+        self.enqueue(item)
 
-    def start_batch_processing(self):
-        """Start processing the queue"""
-        if not self.queue_items:
-            return
-            
-        self.current_queue_index = 0
-        self.set_processing_state(True)
-        self.process_next_item()
+    def enqueue(self, item):
+        self.queue_items.append(item)
+        idx = len(self.queue_items) - 1
+        
+        list_item = QListWidgetItem(self.queue_list_ui)
+        list_item.setSizeHint(QSize(300, 70))
+        widget = QueueItemWidget(item)
+        widget.remove_requested.connect(lambda: self.remove_item(idx))
+        widget.map_requested.connect(lambda: self.map_item(idx))
+        
+        self.queue_list_ui.addItem(list_item)
+        self.queue_list_ui.setItemWidget(list_item, widget)
+        self.update_queue_ui()
 
-    def process_next_item(self):
-        if self.current_queue_index >= len(self.queue_items):
-            self.set_processing_state(False)
-            QMessageBox.information(self, "Done", "Batch processing completed!")
-            self.queue_items = []
-            self.queue_list.clear()
-            return
-            
-        item = self.queue_items[self.current_queue_index]
-        
-        # Update UI to show what's processing
-        self.queue_list.setCurrentRow(self.current_queue_index)
-        
-        # Setup worker
-        self.worker = WorkerThread(self)
-        # We need to pass the specific item config to the worker
-        # But WorkerThread currently reads from UI inputs.
-        # We should modify WorkerThread to accept config or modify UI inputs.
-        # For simplicity, let's update UI inputs to match current item (visual feedback)
+    def remove_item(self, idx):
+        if 0 <= idx < len(self.queue_items):
+            self.queue_items.pop(idx)
+            self.refresh_queue_ui()
+
+    def map_item(self, idx):
+        item = self.queue_items[idx]
         self.title_input.setText(item['title'])
         self.artist_input.setText(item['artist'])
         self.album_cover_input.setText(item['album_art_url'])
         self.selected_youtube_url = item['youtube_url']
         self.selected_lrc_path = item['lrc_path']
-        self.output_mode = item['output_mode']
-        self.prefer_youtube = item.get('prefer_youtube', False) # Store for WorkerThread to read
-        
-        self.worker.finished.connect(self.on_process_finished)
-        self.worker.error.connect(self.on_process_error)
-        self.worker.progress.connect(self.update_progress_bar)
-        self.worker.upload_requested.connect(self.handle_upload_request)
-        
-        self.worker.start()
+        self.check_ready()
 
-    def on_process_finished(self):
-        self.progress_log.append(f"Completed: {self.queue_items[self.current_queue_index]['title']}")
-        self.current_queue_index += 1
-        self.process_next_item()
+    def update_queue_ui(self):
+        cnt = len(self.queue_items)
+        self.queue_count.setText(f"({cnt})")
+        self.start_batch_btn.setEnabled(cnt > 0 and not self.is_processing)
 
-    def on_process_error(self, error_msg):
-        self.progress_log.append(f"Error: {error_msg}")
-        # Continue to next item? Or stop?
-        # Let's continue
-        self.current_queue_index += 1
-        self.process_next_item()
+    def refresh_queue_ui(self):
+        self.queue_list_ui.clear()
+        temp = self.queue_items
+        self.queue_items = []
+        for i in temp: self.enqueue(i)
+        self.update_queue_ui()
 
-    def update_progress_bar(self, message, value):
-        if self.progress_bar:
-            self.progress_bar.setValue(value)
-        self.append_progress_message(message)
+    def clear_queue(self):
+        self.queue_items = []
+        self.queue_list_ui.clear()
+        self.update_queue_ui()
 
-    def handle_upload_request(self, video_path, title, artist):
-        # ... (existing upload logic)
-        # For batch, maybe we should auto-upload or skip dialog?
-        # For now, let's just finish
-        self.worker.finished.emit()
+    def start_batch_processing(self):
+        if not self.queue_items: return
+        self.current_queue_index = 0
+        self.is_processing = True
+        self.set_ui_processing(True)
+        self.process_next()
 
-    def update_album_art(self, url):
-        """Update album art preview"""
-        if not url:
-            self.album_art_label.clear()
-            self.album_art_label.setText("No album art")
+    def process_next(self):
+        if self.current_queue_index >= len(self.queue_items):
+            self.is_processing = False
+            self.set_ui_processing(False)
+            self.log("Batch processing complete.")
+            QMessageBox.information(self, "Done", "All items processed!")
             return
+            
+        item = self.queue_items[self.current_queue_index]
+        self.queue_list_ui.setCurrentRow(self.current_queue_index)
         
-        pixmap = load_image_from_url(url)
-        if pixmap:
-            self.album_art_label.setPixmap(pixmap.scaled(300, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        else:
-            self.album_art_label.setText("Failed to load")
-    
-    def on_model_changed(self, index):
-        """Handle AI model selection change"""
-        if index < 0:
-            return
-        model_id = self.model_combo.itemData(index)
-        if model_id:
-            from app.config.config_manager import get_config
-            config = get_config()
-            config.set_translation_model(model_id)
-    
-    def set_output_mode(self, mode):
-        """Set output mode"""
-        self.output_mode = mode
-    
-    def on_youtube_upload_toggled(self, state):
-        """Handle YouTube upload toggle"""
-        self.youtube_upload_enabled = (state == Qt.CheckState.Checked.value)
-
-    def set_processing_state(self, processing: bool):
-        """Enable/disable controls while processing"""
-        self.is_processing = processing
-        controls = [
-            self.start_batch_btn,
-            self.add_queue_btn,
-            self.search_input,
-            self.model_combo,
-            self.output_video_radio,
-            self.output_xml_radio,
-            self.youtube_upload_checkbox,
-        ]
-        for control in controls:
-            control.setDisabled(processing)
-
-        if self.progress_bar:
-            if processing:
-                self.progress_bar.setVisible(True)
-                self.progress_bar.setValue(0)
-            else:
-                self.progress_bar.setValue(0)
-                self.progress_bar.setVisible(False)
-
-    def append_progress_message(self, message: str):
-        """Append a timestamped message to the progress log"""
-        if not self.progress_log:
-            return
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.progress_log.append(f"[{timestamp}] {message}")
-        scrollbar = self.progress_log.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-        self.last_progress_message = message
-
-    def update_progress_ui(self, message: str, value: int):
-        if self.progress_bar:
-            clamped = max(0, min(100, value))
-            self.progress_bar.setValue(clamped)
-        if message and message != self.last_progress_message:
-            self.append_progress_message(message)
-    
-    def process_selection(self):
-        """Process the selected song"""
-        if not self.title_input.text() or not self.artist_input.text():
-            QMessageBox.warning(self, "Warning", "Please select a song first")
-            return
-        
-        if not self.selected_youtube_url:
-            QMessageBox.warning(self, "Warning", "Please select a YouTube audio source")
-            return
-        
-        # Prepare UI for processing
-        if self.progress_log:
-            self.progress_log.clear()
-        self.append_progress_message("🚀 Processing started")
-        self.set_processing_state(True)
-        
-        # Start worker thread
-        self.worker = WorkerThread(self)
-        self.worker.progress.connect(self.update_progress_ui)
-        self.worker.finished.connect(self.on_process_complete)
-        self.worker.error.connect(self.on_error)
-        self.worker.upload_requested.connect(self.on_upload_requested)
-        self.worker.start()
-    
-    def on_process_complete(self):
-        """Handle process completion"""
-        self.set_processing_state(False)
-        self.append_progress_message("✅ Video generated successfully")
-        QMessageBox.information(self, "Success", "Video generated successfully!")
-        self.worker = None
-    
-    def on_error(self, error_message):
-        """Handle error"""
-        self.set_processing_state(False)
-        self.append_progress_message(f"❌ Error: {error_message}")
-        QMessageBox.critical(self, "Error", f"An error occurred:\n{error_message}")
-        self.worker = None
-    
-    def on_upload_requested(self, video_path, title, artist):
-        """Handle YouTube upload request"""
-        self.set_processing_state(False)
-        self.append_progress_message("📤 Video ready for upload")
-        self.upload_dialog = YouTubeUploadDialog(video_path, title, artist)
-        self.upload_dialog.show()
-        self.upload_dialog.destroyed.connect(lambda: self.on_upload_complete())
-    
-    def on_upload_complete(self):
-        """Handle upload completion"""
-        self.append_progress_message("✅ Upload workflow completed")
-        self.worker = None
-    
-    def clean_temp_files(self):
-        """Clean temporary files except lrc, mp3, jpg, and generated mp4"""
-        import glob
-        
-        reply = QMessageBox.question(
-            self, "확인", 
-            "임시 파일을 정리하시겠습니까?\n(lrc, mp3, jpg, mp4 파일은 유지됩니다)",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        config = ProcessConfig(
+            title=item['title'],
+            artist=item['artist'],
+            album_art_url=item['album_art_url'],
+            youtube_url=item['youtube_url'],
+            output_mode=item['output_mode'],
+            lrc_path=item['lrc_path'],
+            prefer_youtube=item.get('prefer_youtube', False),
+            track_no=item.get('track_no'),
+            sub_folder=item.get('sub_folder')
         )
         
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                deleted_count = 0
-                # Clean TEMP_DIR
-                temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
-                for f in temp_files:
-                    try:
-                        if os.path.isfile(f):
-                            ext = os.path.splitext(f)[1].lower()
-                            # Keep mp3, jpg, lrc, mp4 in temp dir (if any)
-                            if ext not in ['.mp3', '.jpg', '.jpeg', '.lrc', '.mp4']:
-                                os.remove(f)
-                                deleted_count += 1
-                    except Exception as e:
-                        print(f"[WARN] Failed to delete {f}: {e}")
-                
-                self.append_progress_message(f"🗑️ Cleaned {deleted_count} temp files")
-                QMessageBox.information(self, "완료", f"{deleted_count}개의 불필요한 임시 파일을 삭제했습니다.")
-            except Exception as e:
-                QMessageBox.critical(self, "오류", f"파일 삭제 중 오류 발생:\n{e}")
+        self.worker = WorkerThread(config)
+        self.worker.progress.connect(self.on_worker_progress)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.error.connect(self.on_worker_error)
+        self.worker.start()
 
+    def on_worker_progress(self, msg, val):
+        self.log(msg)
+        self.progress_bar.setValue(val)
 
-# Inject queue methods
-from app.ui.queue_methods import inject_queue_methods
-inject_queue_methods(ModernMainWindow)
+    def on_worker_finished(self):
+        self.log(f"Finished: {self.queue_items[self.current_queue_index]['title']}")
+        self.current_queue_index += 1
+        self.process_next()
 
-# Alias for compatibility
+    def on_worker_error(self, err):
+        self.log(f"Error: {err}")
+        self.current_queue_index += 1
+        self.process_next()
+
+    def set_ui_processing(self, state):
+        self.start_batch_btn.setDisabled(state)
+        if hasattr(self, 'search_btn'): self.search_btn.setDisabled(state)
+        self.progress_bar.setVisible(state)
+
+    def log(self, msg):
+        time = datetime.now().strftime("%H:%M:%S")
+        self.progress_log.append(f"[{time}] {msg}")
+
+    def start_manual_entry(self):
+        dialog = ManualEntryDialog(self)
+        if dialog.exec():
+            data = dialog.get_data()
+            self.detail_title.setText(f"📝 {data['title']} (Manual)")
+            self.title_input.setText(data['title'])
+            self.artist_input.setText(data['artist'])
+            self.album_cover_input.setText(data['album_art'])
+            self.selected_youtube_url = data.get('youtube_url', "")
+            self.is_manual_mode = True
+            self.check_ready()
+
 MainWindow = ModernMainWindow

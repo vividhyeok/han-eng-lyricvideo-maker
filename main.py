@@ -1,5 +1,6 @@
 """애플리케이션 진입점."""
 
+import app.config.paths  # Configure FFmpeg/Pydub as early as possible
 from app.ui.main_window import MainWindow
 from PyQt6.QtWidgets import QApplication
 import sys
