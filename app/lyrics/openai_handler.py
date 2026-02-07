@@ -190,17 +190,28 @@ async def _translate_with_openai(lyrics: List[str]) -> List[str]:
     config = get_config()
     model_id = config.get_translation_model()
     
-    print(f"[DEBUG] Using translation model: {model_id}")
+    print(f"[DEBUG] Configured translation model ID: {model_id}")
     
     # Create model instance
     model = create_model(model_id)
     
-    if not model or not model.is_available():
-        print(f"[WARN] Model {model_id} not available, returning original lyrics")
+    if not model:
+        print(f"[ERROR] Failed to create model instance for {model_id}")
+        return lyrics
+        
+    if not model.is_available():
+        print(f"[WARN] Model {model_id} created but reports is_available=False. Checking keys...")
+        # Check keys for debugging
+        if "gemini" in model_id:
+            print(f"[DEBUG] GEMINI_API_KEY status: {'Present' if os.getenv('GEMINI_API_KEY') else 'Missing'}")
+        elif "gpt" in model_id:
+            print(f"[DEBUG] OPENAI_API_KEY status: {'Present' if os.getenv('OPENAI_API_KEY') else 'Missing'}")
         return lyrics
     
     try:
+        print(f"[DEBUG] Starting translation with {model_id}...")
         translated = await model.translate(lyrics, artist, title)
+        print(f"[DEBUG] Translation returned {len(translated)} lines.")
         
         # Clean up translations
         from app.lyrics.openai_handler import clean_translation
@@ -208,7 +219,8 @@ async def _translate_with_openai(lyrics: List[str]) -> List[str]:
         return cleaned
         
     except Exception as e:
-        print(f"[ERROR] Translation failed with {model_id}: {e}")
+        print(f"[ERROR] Translation execution failed: {e}")
+        traceback.print_exc()
         return lyrics
 
 def is_english(text: str) -> bool:

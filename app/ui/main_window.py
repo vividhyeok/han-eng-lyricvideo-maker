@@ -1176,25 +1176,31 @@ class ModernMainWindow(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            try:
-                deleted_count = 0
-                # Clean TEMP_DIR
-                temp_files = glob.glob(os.path.join(TEMP_DIR, "*"))
-                for f in temp_files:
-                    try:
-                        if os.path.isfile(f):
-                            ext = os.path.splitext(f)[1].lower()
-                            # Keep mp3, jpg, lrc, mp4 in temp dir (if any)
-                            if ext not in ['.mp3', '.jpg', '.jpeg', '.lrc', '.mp4']:
-                                os.remove(f)
-                                deleted_count += 1
-                    except Exception as e:
-                        print(f"[WARN] Failed to delete {f}: {e}")
-                
-                self.append_progress_message(f"🗑️ Cleaned {deleted_count} temp files")
-                QMessageBox.information(self, "완료", f"{deleted_count}개의 불필요한 임시 파일을 삭제했습니다.")
-            except Exception as e:
-                QMessageBox.critical(self, "오류", f"파일 삭제 중 오류 발생:\n{e}")
+            # Clean temp dir
+            if os.path.exists(TEMP_DIR):
+                try:
+                    for file in os.listdir(TEMP_DIR):
+                        path = os.path.join(TEMP_DIR, file)
+                        try:
+                            if os.path.isfile(path):
+                                os.unlink(path)
+                        except Exception as e:
+                            print(f"[WARN] Failed to delete {path}: {e}")
+                    print("[INFO] Temp directory cleaned.")
+                except Exception as e:
+                    print(f"[ERROR] Error cleaning temp dir: {e}")
+
+            # Clean cache
+            from app.config.paths import TRANSLATION_CACHE_PATH
+            if os.path.exists(TRANSLATION_CACHE_PATH):
+                try:
+                    os.unlink(TRANSLATION_CACHE_PATH)
+                    print("[INFO] Translation cache deleted.")
+                except Exception as e:
+                    print(f"[ERROR] Failed to delete cache: {e}")
+            
+            self.progress_log.append("🧹 Cleanup completed. Cache cleared.")
+            QMessageBox.information(self, "Success", "Cleanup completed!")
 
 
 # Inject queue methods

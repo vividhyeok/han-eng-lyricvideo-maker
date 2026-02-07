@@ -9,3 +9,4 @@ pydub
 spotdl>=3.9.0
 youtubesearchpython>=1.6.2
 yt-dlp
+google-generativeai

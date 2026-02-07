@@ -42,6 +42,19 @@ class ProcessManager:
         try:
             print("[DEBUG] 작업 프로세스 시작")
             
+            # YouTube Music URL Sanitization
+            if "music.youtube.com" in config.youtube_url:
+                print(f"[DEBUG] YouTube Music URL 감지: {config.youtube_url}")
+                config.youtube_url = config.youtube_url.replace("music.youtube.com", "www.youtube.com")
+                # Strip list parameter and others, keep only v
+                if "&" in config.youtube_url and "v=" in config.youtube_url:
+                    import urllib.parse
+                    parsed = urllib.parse.urlparse(config.youtube_url)
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    if 'v' in qs:
+                        config.youtube_url = f"https://www.youtube.com/watch?v={qs['v'][0]}"
+                print(f"[DEBUG] 변환된 URL: {config.youtube_url}")
+            
             ensure_data_dirs()
             os.makedirs(LYRICS_DIR, exist_ok=True)
             print(f"[DEBUG] 디렉토리 확인: {TEMP_DIR}")

@@ -318,6 +318,8 @@ class GeminiModel(TranslationModel):
             
         except Exception as e:
             print(f"[ERROR] Gemini translation failed: {e}")
+            import traceback
+            traceback.print_exc()
             return lyrics
     
     def _get_system_prompt(self) -> str:
