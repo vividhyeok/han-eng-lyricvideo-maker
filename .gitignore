@@ -5,6 +5,7 @@ __pycache__/
 # Local settings / secrets
 .env
 .env.*
+!.env.example
 token.pickle
 client_secret.json
 
@@ -17,6 +18,7 @@ temp/
 temp_test/
 uploader/
 ffmpeg-8.0.1-essentials_build/
+bin/ffmpeg/
 *.zip
 *.mp4
 
